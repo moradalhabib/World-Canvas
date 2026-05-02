@@ -43,6 +43,7 @@ import { findPath, isWalkable } from "./pathfinding";
 import { tickYear as tickRoyalYear, getLifeStage, notifyDeath, addChronicle, ensureMonarch } from "./royalty";
 import type { Citizen } from "./types";
 import { CONSTRUCTION_WORK_MS_REQUIRED } from "./types";
+import { AssetManager, SPRITE_MANIFEST } from "./AssetManager";
 
 /* Phase 4: Combat tunables */
 const COMBAT_RADIUS_TILES = 2;
@@ -231,6 +232,20 @@ export class GameEngine {
    * sprite hot path. Entries are evicted via simple FIFO when count >= cap.
    */
   private compositeSprites = new Map<string, { sig: number; sprite: HTMLCanvasElement }>();
+
+  /**
+   * Phase 22 — Sprite asset pipeline. Holds all preloaded PNGs (buildings,
+   * characters, environment). Initialized + preload-kicked-off in the
+   * constructor; every per-entity draw call asks `assets.has(key)` first
+   * and only falls through to the existing procedural draw path when the
+   * sprite isn't ready (or doesn't exist on disk yet — Phase 22 ships
+   * with zero PNGs, so the fallback IS the live visual right now).
+   *
+   * Named `spriteAssets` (not `assets`) to avoid colliding with the legacy
+   * Phase 10.5 procedural sprite atlas, which is also called `assets` and
+   * holds offscreen-canvas accessory tiles.
+   */
+  private spriteAssets!: AssetManager;
   private compositeSpriteTileSize = 0;
   private readonly COMPOSITE_CACHE_MAX = 200;
 
@@ -340,6 +355,15 @@ export class GameEngine {
     // so accessory blits never have to wait. Terrain layer is built lazily
     // on first render (after resize so we know the device pixel ratio).
     this.buildAssets();
+
+    // Phase 22 — kick off PNG sprite preload. BASE_URL is Vite's artifact
+    // base path (currently "/" for god-sim, but resolved dynamically so a
+    // future multi-artifact remount works without touching this code).
+    // Fire-and-forget: no frame is blocked, every PNG resolves async, and
+    // every draw call falls back to procedural rendering until the
+    // matching Image fires onload.
+    this.spriteAssets = new AssetManager(import.meta.env.BASE_URL);
+    this.spriteAssets.preload(SPRITE_MANIFEST);
 
     // Initialize desirability map and seed with terrain + any saved buildings.
     this.desirability = new DesirabilityMap(this.state.grid.rows, this.state.grid.cols);
@@ -1157,6 +1181,11 @@ export class GameEngine {
   private drawBuildingFloor(b: Building, def: ReturnType<typeof getBuildingDef>, x: number, y: number, ts: number) {
     if (b.status === "rubble") return;
     if (def.category === "service" && b.typeId === "well") return; // wells use legacy combined draw
+    // Phase 22 — when a PNG sprite is loaded for this building type the
+    // sprite is the entire visual (drawn in the FRONT layer below); the
+    // floor / back-structure / front-and-roof procedural decomposition
+    // is suppressed so we don't double-render planks behind the sprite.
+    if (this.spriteAssets.has(`building.${b.typeId}`)) return;
     // Phase 21: scaffolded foundations replace the normal floor + furniture
     // for any building that hasn't completed construction yet. Drawn ONLY in
     // the floor layer; the back-wall + front-wall + roof renderers early-out
@@ -1479,6 +1508,8 @@ export class GameEngine {
   private drawBuildingBackStructure(b: Building, def: ReturnType<typeof getBuildingDef>, x: number, y: number, ts: number) {
     if (b.status === "rubble") return;
     if (def.category === "service" && b.typeId === "well") return;
+    // Phase 22 — sprite handles the whole structure when loaded.
+    if (this.spriteAssets.has(`building.${b.typeId}`)) return;
     // Phase 21: incomplete buildings have no back wall — the foundation
     // layer drew the scaffolding visual already.
     if (b.complete === false) return;
@@ -1538,6 +1569,21 @@ export class GameEngine {
   ) {
     if (b.status === "rubble") return;
     if (def.category === "service" && b.typeId === "well") return;
+    // Phase 22 — sprite-first: blit the building PNG anchored bottom-center
+    // on the iso diamond. We pick the front-and-roof slot for the blit so
+    // the sprite sits in the depth queue at the same sortKey as the
+    // procedural front wall, preserving NPC-behind-wall occlusion ordering.
+    // Roof transparency (when an NPC is inside) is honored via globalAlpha.
+    if (this.spriteAssets.has(`building.${b.typeId}`)) {
+      const ctx = this.ctx;
+      const prevAlpha = ctx.globalAlpha;
+      // Mix roofAlpha (0..1) into the sprite blit so the dollhouse
+      // cutaway still works when an NPC enters the building.
+      ctx.globalAlpha = prevAlpha * Math.max(roofAlpha, 0.6);
+      this.spriteAssets.tryDraw(ctx, `building.${b.typeId}`, x, y, ts);
+      ctx.globalAlpha = prevAlpha;
+      return;
+    }
     // Phase 21: incomplete buildings have no walls or roof — only the
     // scaffolded foundation rendered by drawBuildingFloor.
     if (b.complete === false) return;
@@ -1791,6 +1837,11 @@ export class GameEngine {
     ts: number
   ) {
     const ctx = this.ctx;
+    // Phase 22 — sprite-first: if a PNG for this building type is loaded,
+    // blit it (anchored bottom-center on the iso diamond) and skip the
+    // procedural well/house draw entirely. Falls through harmlessly when
+    // no PNG exists, preserving the current visual 1:1.
+    if (this.spriteAssets.tryDraw(ctx, `building.${b.typeId}`, x, y, ts)) return;
     const pad = ts * 0.15;
     const w = ts - pad * 2;
     const h = ts - pad * 2;
@@ -2595,6 +2646,28 @@ export class GameEngine {
   ) {
     const ctx = this.ctx;
     const cam = this.state.camera;
+
+    // Phase 22 — sprite-first per-citizen pipeline. We resolve the most
+    // specific PNG key the manager has loaded, in priority order: King /
+    // Queen → infant → child → noble → peasant. This way dropping in
+    // just `peasant.png` swaps every commoner without breaking nobles
+    // (who fall through to procedural until `noble.png` ships). When a
+    // sprite is found we blit it anchored bottom-center at the citizen's
+    // iso ground point and skip the rest of this function — the dense
+    // procedural body / limbs / accessories pipeline.
+    //
+    // NOTE: This early-return ALSO skips the path-line hint + overhead
+    // badge logic below. Phase 22 ships with no PNGs so this never
+    // triggers; once real sprites exist we can split this into a
+    // sprite-body call with the procedural overlays still drawn around
+    // it. Wiring the pipeline first is the explicit Phase 22 ask.
+    const spriteKey = this.resolveCitizenSpriteKey(c);
+    if (spriteKey && this.spriteAssets.has(spriteKey)) {
+      const tileX = sx - ts * 0.5;
+      const tileY = sy - ts * 0.5;
+      this.spriteAssets.tryDraw(ctx, spriteKey, tileX, tileY, ts);
+      return;
+    }
 
     const radius = ts * 0.18; // legacy radius — kept for path-line spacing
 
@@ -3876,6 +3949,30 @@ export class GameEngine {
    */
   public getFPS(): number {
     return Math.round(this.fpsEma);
+  }
+
+  /**
+   * Phase 22 — Resolve the most-specific sprite manifest key for a citizen.
+   * Priority: King → Queen → infant → child → noble → peasant. The first
+   * key the AssetManager actually has loaded is returned; if none of the
+   * candidate keys are loaded we return null and the caller falls through
+   * to the procedural body draw. Returning a fallback key (vs. always
+   * returning the most-specific one) means dropping in just `peasant.png`
+   * works without nobles disappearing.
+   */
+  private resolveCitizenSpriteKey(c: Citizen): string | null {
+    const candidates: string[] = [];
+    if (c.isKing) candidates.push("character.king");
+    else if (c.isQueen || c.isDowagerQueen) candidates.push("character.queen");
+    const stage = getLifeStage(c, this.state.time.gameYear);
+    if (stage === "infant") candidates.push("character.infant");
+    else if (stage === "child") candidates.push("character.child");
+    if (c.socialTier === "noble") candidates.push("character.noble");
+    candidates.push("character.peasant");
+    for (const key of candidates) {
+      if (this.spriteAssets.has(key)) return key;
+    }
+    return null;
   }
 
   /**
