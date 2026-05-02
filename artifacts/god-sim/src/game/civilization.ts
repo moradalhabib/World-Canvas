@@ -57,6 +57,11 @@ export function createDefaultCivilization(grid: Grid): CivilizationState {
       social: { value: 15, weight: 1.0, decay: 1.5 },
       vanity: { value: 10, weight: 0.7, decay: 1 },
       faith: { value: 12, weight: 0.9, decay: 1 },
+      // Phase 14: leisure starts moderately unmet so a fresh realm has a
+      // small but visible orange bar in the Civic Needs panel from day 1.
+      // Rises +decay per month; a Tavern's `satisfies.leisure` (24/month)
+      // pushes it back down once the building is staffed.
+      leisure: { value: 25, weight: 0.8, decay: 1.2 },
     },
     founded,
     monthlyTaxHistory: [],

@@ -158,6 +158,82 @@ export const BUILDING_DEFS: Record<BuildingId, BuildingDef> = {
     satisfies: {},
   },
 
+  /* ── Phase 14 — Living City Expansion ──
+   * Three new building kinds wire the Crime, Medicine, and Leisure systems
+   * into the existing economy. They ARE place-able through the Architect
+   * tool because every building in BUILDING_DEFS is automatically picked up
+   * by the placement UI; their `validOn` / `requiredAdjacent` rules keep
+   * them from being dropped on water or mountains.
+   *
+   * Costs are intentionally moderate (Tavern is the most expensive at
+   * 14 wood + 8 stone + 30 gold) so a mid-game realm can afford one of each
+   * after a couple of years of farming + tax income, but a fresh realm
+   * can't spam them. None of these buildings produce raw resources, so the
+   * supply-chain balance from earlier phases is preserved.
+   */
+  dungeon: {
+    id: "dungeon",
+    name: "Dungeon",
+    category: "service",
+    tier: "middle",
+    validOn: ["grass", "desert"],
+    buildCost: { wood: 6, stone: 18, gold: 10 },
+    consumes: { bread: 1 }, // basic upkeep — feeding the prisoners
+    produces: {},
+    taxes: 0,
+    housing: 0, // prisoners aren't counted toward population housing
+    workers: 1,
+    desirability: -0.4, // nobody wants to live next to the gallows
+    desirabilityRadius: 5,
+    fillColor: "#4a4540",
+    roofColor: "#1f1c1a",
+    glyph: "⌬",
+    satisfies: { safety: 8 }, // visible justice deters crime → small safety bonus
+  },
+
+  apothecary: {
+    id: "apothecary",
+    name: "Apothecary",
+    category: "service",
+    tier: "middle",
+    validOn: ["grass", "desert"],
+    buildCost: { wood: 8, stone: 6, gold: 12 },
+    consumes: { wood: 1 }, // herbs / firewood for tinctures
+    produces: {},
+    taxes: 1,
+    housing: 0,
+    workers: 1, // staffed by a Doctor
+    desirability: 0.15,
+    desirabilityRadius: 4,
+    fillColor: "#e8e2d4",
+    roofColor: "#a83a3a", // red-cross roof
+    glyph: "+",
+    satisfies: { safety: 6, social: 2 }, // citizens feel safer near a healer
+  },
+
+  tavern: {
+    id: "tavern",
+    name: "Tavern",
+    category: "service",
+    tier: "middle",
+    validOn: ["grass", "desert"],
+    buildCost: { wood: 14, stone: 8, gold: 30 },
+    consumes: { wheat: 2, bread: 1 }, // ale + meals
+    produces: {},
+    taxes: 6, // brewing licenses
+    housing: 0,
+    workers: 1,
+    desirability: 0.20,
+    desirabilityRadius: 4,
+    fillColor: "#a06a3a",
+    roofColor: "#3d2515",
+    glyph: "🍺",
+    // Big social/leisure draw. Note: leisure satisfaction here is the
+    // CIVIC need (not per-citizen leisure, which is restored by the
+    // DRINKING tick inside the building).
+    satisfies: { social: 18, leisure: 24, vanity: 4 },
+  },
+
   /* ── Service ── */
   well: {
     id: "well",

@@ -169,7 +169,11 @@ export type BuildingId =
   | "bakery"
   | "lumber_camp"
   | "mine"
-  | "well";
+  | "well"
+  // Phase 14 — Living City Expansion (Crime, Medicine, Leisure)
+  | "dungeon"
+  | "apothecary"
+  | "tavern";
 
 export type BuildingCategory = "residential" | "production" | "service";
 
@@ -219,9 +223,12 @@ export interface Building {
 
 /* ── Utility AI: needs ── */
 
-export type NeedType = "hunger" | "safety" | "social" | "vanity" | "faith";
+// Phase 14: leisure need is added here so the Civic Needs HUD picks it up
+// automatically via ALL_NEEDS.map(). Default weight/decay configured in
+// createDefaultCivilization() / storage migration backfill.
+export type NeedType = "hunger" | "safety" | "social" | "vanity" | "faith" | "leisure";
 
-export const ALL_NEEDS: NeedType[] = ["hunger", "safety", "social", "vanity", "faith"];
+export const ALL_NEEDS: NeedType[] = ["hunger", "safety", "social", "vanity", "faith", "leisure"];
 
 export interface NeedState {
   /** 0..100, higher = more urgent / more unmet. */
@@ -238,6 +245,8 @@ export const NEED_COLORS: Record<NeedType, string> = {
   social: "#d96bd9",
   vanity: "#d4af37",
   faith: "#a78bd9",
+  // Phase 14: amber-orange to evoke a tavern lantern.
+  leisure: "#e07b3a",
 };
 
 export const NEED_LABELS: Record<NeedType, string> = {
@@ -246,6 +255,7 @@ export const NEED_LABELS: Record<NeedType, string> = {
   social: "Social",
   vanity: "Vanity",
   faith: "Faith",
+  leisure: "Leisure",
 };
 
 /* ── Civilization state ── */
@@ -282,7 +292,18 @@ export type CitizenState =
   /** Phase 12: NPC has snapped from mood == 0 (see breakKind). */
   | "MENTAL_BREAK"
   /** Phase 12: NPC is mid-rumor-exchange with chatPartnerId (see chatUntilMs). */
-  | "CHATTING";
+  | "CHATTING"
+  /* -- Phase 14: Living City Expansion -- */
+  /** Driven by morality + (hunger>90 || mood==0). Paths to nearest house/treasury to steal. */
+  | "STEALING"
+  /** Guard pathing toward a STEALING citizen via arrestTargetId. */
+  | "ARRESTING"
+  /** Locked inside a Dungeon. Consumes 0.5 bread/month, no work. */
+  | "IMPRISONED"
+  /** Doctor pathing toward a SICK citizen to cure them. */
+  | "HEALING"
+  /** Off-duty NPC drinking at the Tavern. Restores mood + leisure. */
+  | "DRINKING";
 
 /** Phase 9: Permanent behavioral trait assigned at spawn. */
 export type CitizenTrait = "Zealot" | "Greedy" | "Coward" | "Diligent";
@@ -294,8 +315,10 @@ export interface CitizenSkills {
   xp: number;
 }
 
-/** Phase 4: Profession assigned to every adult NPC. */
-export type Profession = "Farmer" | "Miner" | "Guard" | "None";
+/** Phase 4: Profession assigned to every adult NPC.
+ *  Phase 14: Doctor added — does not farm; runs a separate utility AI that
+ *  prioritizes pathfinding to SICK NPCs to cure them at the Apothecary. */
+export type Profession = "Farmer" | "Miner" | "Guard" | "Doctor" | "None";
 
 /** Phase 4: Faction during a Civil War (HIGH dissent). */
 export type Faction = "royalist" | "rebel" | "neutral";
@@ -405,8 +428,33 @@ export interface Citizen {
   chatUntilMs?: number;
   /** CHATTING: id of the symmetric chat partner (also in CHATTING state). */
   chatPartnerId?: string;
+  /** Phase 14: state to restore when CHATTING expires. Used so a DRINKING
+   *  patron pulled into a tavern chat reverts to DRINKING (not IDLE) and
+   *  still receives the monthly DRINKING leisure/mood restore. Defaults
+   *  to IDLE if absent. */
+  chatPrevState?: CitizenState;
   /** Per-citizen rebellion contagion meter (0..100). Spreads via rumor mill. */
   dissent?: number;
+
+  /* -- Phase 14: Living City Expansion (Crime, Medicine, Leisure) -- */
+  /** 0..100 hidden morality. Greedy ~25, Zealot ~80, Diligent ~65, Coward ~55,
+   *  others ~55. Crime trigger rolls Math.random()*100 > morality. */
+  morality?: number;
+  /** 0..100. Drains by SICK ticks; below 0 → DEAD. Doctors restore to >=50. */
+  health?: number;
+  /** True while infected. Triggers contagion via rumor mill, slows movement,
+   *  spawns the green particle aura. */
+  isSick?: boolean;
+  /** Absolute (year * 12 + month) the citizen contracted the plague — used
+   *  for chronicles and to throttle re-onset. */
+  sickSinceMonth?: number;
+  /** 0..100 personal leisure debt. Rises every month; restored by drinking
+   *  at the Tavern. Civic needs.leisure averages this across the realm. */
+  leisure?: number;
+  /** ARRESTING guards: id of the STEALING citizen they are chasing. */
+  arrestTargetId?: string;
+  /** IMPRISONED citizens: id of the dungeon building they are locked in. */
+  imprisonedInId?: string;
 }
 
 /* ── Phase 3B: Chronicle entries ── */

@@ -196,6 +196,8 @@ export default function App() {
         social: { ...c.needs.social },
         vanity: { ...c.needs.vanity },
         faith: { ...c.needs.faith },
+        // Phase 14: leisure need (Tavern + DRINKING + per-citizen leisure pool).
+        leisure: { ...c.needs.leisure },
       },
       monthlyTaxHistory: [...c.monthlyTaxHistory],
     });
@@ -492,6 +494,12 @@ export default function App() {
                   case "MOVING": return c.targetTile ? "Traveling" : "Walking";
                   case "WORKING": return "Working";
                   case "MINISTERING": return "Ministering";
+                  // Phase 14 — Living City Expansion
+                  case "STEALING": return "Stealing";
+                  case "ARRESTING": return "Arresting Thief";
+                  case "IMPRISONED": return "Imprisoned";
+                  case "HEALING": return "Treating Patient";
+                  case "DRINKING": return "At the Tavern";
                   case "IDLE":
                   default: return "Idle";
                 }

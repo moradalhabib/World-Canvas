@@ -1,5 +1,6 @@
 import type {
   Building,
+  BuildingId,
   Citizen,
   CivilizationState,
   CitizenTrait,
@@ -94,6 +95,35 @@ const RUMOR_DISSENT_CHANCE = 0.25;        // 25% chance per chat
 const RUMOR_HERETIC_FAITH_THRESHOLD = 20; // faith < this → counted as a "heretic" carrier
 const RUMOR_HERETIC_FAITH_LOSS = 5;       // faith B loses when chatting with a heretic A
 
+/* Phase 14: Living City Expansion (Crime, Medicine, Leisure) tunables.
+ * All cadence values are PER MONTH unless noted. The crime/health/leisure
+ * systems are intentionally low-frequency so a steady-state realm sees
+ * a few events per year, not per minute. */
+const CRIME_TRIGGER_HUNGER = 90;            // hunger above which crime is allowed to fire
+const ARREST_RADIUS_TILES = 5;              // chebyshev — guard scan radius for STEALING NPCs
+const STEAL_LOOT_GOLD = 10;                 // gold drained on a successful theft
+const STEAL_MOOD_REWARD = 30;               // mood gained when a thief gets away clean
+const PRISONER_BREAD_COST = 0.5;            // bread eaten per IMPRISONED prisoner per month
+const PLAGUE_ONSET_WINTER = 0.005;          // 0.5% / month during natural winter
+const PLAGUE_ONSET_HUNGRY = 0.01;           // 1% / month if hunger > 80
+const SICK_HEALTH_DRAIN = 5;                // health lost per month while sick
+const SICK_MOOD_DRAIN = 3;                  // mood lost per month while sick
+const SICK_SPEED_MUL = 0.5;                 // movement speed multiplier while sick
+const DOCTOR_SCAN_RADIUS = 12;              // tiles — Doctor → SICK target search
+const HEAL_MIN_HEALTH = 50;                 // floor restored after a successful heal
+const CONTAGION_CHANCE_NORMAL = 0.15;       // base sick→susceptible flip chance
+const CONTAGION_CHANCE_TAVERN = 0.30;       // tavern accelerator (2x normal)
+const LEISURE_RISE_PER_MONTH = 2;           // per-citizen leisure debt accrual
+const LEISURE_MOOD_DRAIN = 1;               // mood lost per month when leisure > 50
+const LEISURE_DRINK_RESTORE = 30;           // leisure drained per DRINKING tick
+const LEISURE_DRINK_MOOD = 10;              // mood gained per DRINKING tick
+const TAVERN_VISIT_CHANCE = 0.4;            // dusk roll for off-duty NPCs with leisure>30
+const TAVERN_LEISURE_THRESHOLD = 30;        // min per-citizen leisure to be eligible
+const TAVERN_CAPACITY = 20;                 // hard cap on simultaneous DRINKING patrons
+const TAVERN_RUMOR_RADIUS_MUL = 2;          // tavern doubles rumor mill proximity
+const TAVERN_RUMOR_CHANCE_MUL = 2;          // tavern doubles rumor mill chat probability
+const TAVERN_PROXIMITY_TILES = 1;           // chebyshev distance to be "inside" the tavern
+
 /* -------------------------------------------------------------------------- */
 /*  Phase 12: Family surnames                                                 */
 /* -------------------------------------------------------------------------- */
@@ -103,6 +133,21 @@ const RUMOR_HERETIC_FAITH_LOSS = 5;       // faith B loses when chatting with a 
  * Founders draw randomly; civilian children inherit their mother's.
  * Royal children inherit the dynasty surname (the King's lastName).
  */
+/**
+ * Phase 14: Map a citizen's permanent trait to a default morality score.
+ * Greedy citizens are far more likely to steal; Zealots almost never do.
+ * Used by createCitizen() and the v10→v11 storage backfill.
+ */
+function moralityForTrait(trait?: CitizenTrait): number {
+  // Small per-citizen jitter so two Greedy NPCs don't share an identical morality.
+  const jitter = Math.floor(Math.random() * 20);
+  if (trait === "Greedy") return 15 + jitter;   // 15..34
+  if (trait === "Zealot") return 70 + jitter;   // 70..89
+  if (trait === "Diligent") return 55 + jitter; // 55..74
+  if (trait === "Coward") return 45 + jitter;   // 45..64
+  return 50 + jitter;                           // 50..69 default
+}
+
 export const LAST_NAMES: string[] = [
   "Baker", "Smith", "Iron", "Crown", "Stone", "Wood",
   "Fields", "Rivers", "Hill", "Cooper", "Mason", "Fletcher",
@@ -173,6 +218,13 @@ export function createCitizen(
     lastName: opts.lastName ?? pickLastName(),
     mood: 100,
     dissent: 0,
+    // Phase 14: Living City Expansion fields. morality is trait-driven so
+    // Greedy founders feel different from day 1; health/leisure start at a
+    // healthy baseline; isSick/imprisonment fields default unset.
+    morality: moralityForTrait(opts.trait),
+    health: 100,
+    leisure: 0,
+    isSick: undefined,
   };
 }
 
@@ -299,7 +351,16 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
     if (typeof c.vanity !== "number") c.vanity = 0;
     // Phase 4 backfill
     if (typeof c.goods !== "number") c.goods = 0;
-    if (c.profession !== "Farmer" && c.profession !== "Miner" && c.profession !== "Guard" && c.profession !== "None") {
+    // Phase 14: Doctor is a valid profession. Older saves may be missing
+    // it but we don't auto-assign — only fresh realms or future code paths
+    // pick the Doctor profession explicitly.
+    if (
+      c.profession !== "Farmer" &&
+      c.profession !== "Miner" &&
+      c.profession !== "Guard" &&
+      c.profession !== "Doctor" &&
+      c.profession !== "None"
+    ) {
       c.profession = c.isKing ? "None" : pickProfessionForIndex(citizens.indexOf(c));
     }
     if (c.faction !== "rebel" && c.faction !== "royalist" && c.faction !== "neutral") {
@@ -329,6 +390,17 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
     if (typeof c.dissent !== "number" || c.dissent < 0) {
       c.dissent = 0;
     }
+    // Phase 14 backfill — Living City Expansion fields. Morality is derived
+    // from the citizen's trait so existing population behaves consistently
+    // (Greedy NPCs are immediately at risk of theft, Zealots are not).
+    if (typeof c.morality !== "number") c.morality = moralityForTrait(c.trait);
+    if (typeof c.health !== "number" || c.health < 0 || c.health > 100) c.health = 100;
+    if (typeof c.leisure !== "number" || c.leisure < 0) c.leisure = 0;
+    if (typeof c.isSick !== "boolean") c.isSick = undefined;
+    // Defensive: if a save was persisted mid-arrest/imprisonment without the
+    // full state machine, drop the orphan link fields back to undefined.
+    if (c.state !== "ARRESTING") c.arrestTargetId = undefined;
+    if (c.state !== "IMPRISONED") c.imprisonedInId = undefined;
     // Defensive: clear any partial Phase-12 transient state from a crashed save.
     if (c.state !== "MENTAL_BREAK") {
       c.breakKind = undefined;
@@ -359,6 +431,12 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
       "FLEEING",
       "MENTAL_BREAK",
       "CHATTING",
+      // Phase 14 — Living City Expansion
+      "STEALING",
+      "ARRESTING",
+      "IMPRISONED",
+      "HEALING",
+      "DRINKING",
     ]);
     if (!validStates.has(c.state as string)) c.state = "IDLE";
   }
@@ -562,6 +640,49 @@ export function tickCitizenMonth(
   // so combatants don't wander off mid-fight.
   if (citizen.state === "COMBAT") return;
 
+  // ---- Phase 14: IMPRISONED — no work, no hunger crisis, just countdown. -
+  // Prisoners eat a small bread ration each month (paid out of civ reserves)
+  // and slowly recover mood. They auto-release when mood >= 50, simulating
+  // "they served their sentence and were let out".
+  if (citizen.state === "IMPRISONED") {
+    if (civ.resources.bread > 0) {
+      civ.resources.bread = Math.max(0, civ.resources.bread - PRISONER_BREAD_COST);
+    }
+    citizen.mood = Math.min(100, (citizen.mood ?? 0) + 4);
+    if ((citizen.mood ?? 0) >= 50) {
+      citizen.state = "IDLE";
+      citizen.imprisonedInId = undefined;
+      citizen.hunger = Math.max(0, citizen.hunger - 30); // released, well-fed
+      if (state) {
+        addChronicle(state, `${citizen.name} ${citizen.lastName ?? ""} is released from the dungeon.`.replace(/\s+/g, " "));
+      }
+    }
+    return;
+  }
+
+  // ---- Phase 14: DRINKING — restores mood + leisure, then sleeps. -------
+  // After 1 month of drinking the patron reverts to SLEEPING (since dusk
+  // already fired), or IDLE if it's daytime when this fires (e.g. via
+  // offline catch-up replaying the month boundary).
+  if (citizen.state === "DRINKING") {
+    citizen.mood = Math.min(100, (citizen.mood ?? 0) + LEISURE_DRINK_MOOD);
+    citizen.leisure = Math.max(0, (citizen.leisure ?? 0) - LEISURE_DRINK_RESTORE);
+    citizen.state = state?.dayNight === "night" ? "SLEEPING" : "IDLE";
+    return;
+  }
+
+  // ---- Phase 14: STEALING / ARRESTING / HEALING are movement-driven ------
+  // states. Their per-month brain tick is a no-op — the state resolves in
+  // updateCitizenMovement() (arrival branch) or in the per-month
+  // tickCrimeAndLaw / tickDoctors passes that run after this loop.
+  if (
+    citizen.state === "STEALING" ||
+    citizen.state === "ARRESTING" ||
+    citizen.state === "HEALING"
+  ) {
+    return;
+  }
+
   // Phase 4: Economy + faction tick (runs every month for living adults).
   if (state) tickEconomyAndFaction(citizen, buildings, civ, state);
 
@@ -715,6 +836,57 @@ export function tickCitizenMonth(
     }
   }
 
+  // ---- Phase 14: Sickness drain + leisure accrual ----------------------
+  // Sick citizens lose health each month; reaching 0 is fatal. They also
+  // suffer a separate mood penalty on top of any other stressor. Recovery
+  // happens via Doctor visits (tickDoctors) or by ticking down the timer
+  // — we don't auto-cure here.
+  if (citizen.isSick) {
+    citizen.health = Math.max(0, (citizen.health ?? 100) - SICK_HEALTH_DRAIN);
+    mood -= SICK_MOOD_DRAIN;
+    stressed = true;
+    if ((citizen.health ?? 0) <= 0) {
+      citizen.state = "DEAD";
+      citizen.path = [];
+      citizen.pathIndex = 0;
+      citizen.progress = 0;
+      citizen.targetTile = undefined;
+      citizen.targetBuildingId = undefined;
+      if (state) {
+        addChronicle(
+          state,
+          `${citizen.name} ${citizen.lastName ?? ""} succumbs to the plague.`.replace(/\s+/g, " ")
+        );
+        notifyDeath(state, citizen);
+      }
+      return;
+    }
+  }
+
+  // Plague onset — only test once per month, only on healthy non-royals.
+  // Winter and starvation each independently increase the chance.
+  if (!citizen.isSick && !citizen.isKing && !citizen.isQueen && state) {
+    let onset = 0;
+    if (state.currentSeason === "WINTER") onset += PLAGUE_ONSET_WINTER;
+    if (citizen.hunger > 80) onset += PLAGUE_ONSET_HUNGRY;
+    if (onset > 0 && Math.random() < onset) {
+      citizen.isSick = true;
+      citizen.sickSinceMonth = state.time.gameYear * 12 + state.time.gameMonth;
+      addChronicle(
+        state,
+        `${citizen.name} ${citizen.lastName ?? ""} has fallen ill.`.replace(/\s+/g, " ")
+      );
+    }
+  }
+
+  // Per-citizen leisure debt rises every month. When it crests 50 a citizen
+  // becomes restless — they suffer a small mood drain until they get to a
+  // Tavern (DRINKING tick clears leisure back down).
+  citizen.leisure = Math.min(100, (citizen.leisure ?? 0) + LEISURE_RISE_PER_MONTH);
+  if ((citizen.leisure ?? 0) > 50) {
+    mood -= LEISURE_MOOD_DRAIN;
+  }
+
   citizen.mood = Math.max(0, Math.min(100, mood));
 
   if (citizen.mood === 0 && state) {
@@ -840,9 +1012,14 @@ export function updateCitizenMovement(
   if (citizen.state === "CHATTING") {
     const now = state?.time.totalRealMs ?? performance.now();
     if (typeof citizen.chatUntilMs === "number" && now >= citizen.chatUntilMs) {
-      citizen.state = "IDLE";
+      // Phase 14: restore prior state (e.g. DRINKING) so a tavern patron
+      // pulled into a chat doesn't permanently lose their DRINKING status
+      // and miss the monthly leisure restore. Defaults to IDLE for the
+      // standard rumor-mill case.
+      citizen.state = citizen.chatPrevState ?? "IDLE";
       citizen.chatUntilMs = undefined;
       citizen.chatPartnerId = undefined;
+      citizen.chatPrevState = undefined;
     }
     return;
   }
@@ -853,12 +1030,18 @@ export function updateCitizenMovement(
   // HUD + render overlays; everything else gets the generic MOVING tag while
   // walking. (Phase 12: MENTAL_BREAK preserved so the THIEF/RECLUSE overlays
   // stay visible while the NPC is in transit toward their target.)
+  // Phase 14: STEALING/ARRESTING/HEALING/DRINKING are also "named" walking
+  // states whose overlay glyphs need to render mid-walk — preserve them.
   if (
     citizen.state !== "SEEK_FOOD" &&
     citizen.state !== "ROGUE" &&
     citizen.state !== "REBEL" &&
     citizen.state !== "FLEEING" &&
-    citizen.state !== "MENTAL_BREAK"
+    citizen.state !== "MENTAL_BREAK" &&
+    citizen.state !== "STEALING" &&
+    citizen.state !== "ARRESTING" &&
+    citizen.state !== "HEALING" &&
+    citizen.state !== "DRINKING"
   ) {
     citizen.state = "MOVING";
   }
@@ -867,6 +1050,10 @@ export function updateCitizenMovement(
   const year = state?.time.gameYear ?? 1;
   let speedMul =
     getLifeStage(citizen, year) === "elder" ? ELDER_SPEED_MULTIPLIER : 1;
+  // Phase 14: Sick citizens stagger at half speed. Stacks multiplicatively
+  // with the elder slow and the rain/snow slow below — a sick elder in a
+  // thunderstorm crawls at 0.7 * 0.5 * 0.9 = ~31% normal speed.
+  if (citizen.isSick) speedMul *= SICK_SPEED_MUL;
   // Phase 13: rain/snow/thunderstorm slows outdoor movement by 10%. SLEEPING
   // citizens never tick into this branch (tickCitizenMonth early-returns)
   // so we don't need an indoor check here — anyone walking IS outdoors.
@@ -967,6 +1154,88 @@ export function updateCitizenMovement(
       citizen.targetTile = undefined;
       citizen.targetBuildingId = undefined;
       return;
+    }
+
+    // Phase 14: STEALING completion — the thief reaches a target tile (a
+    // non-own house OR the treasury) and pockets a small loot. Mood spikes.
+    if (citizen.state === "STEALING") {
+      const stolen = Math.min(STEAL_LOOT_GOLD, civ.treasury);
+      civ.treasury -= stolen;
+      civ.resources.gold = civ.treasury;
+      citizen.vanity = Math.min(999, citizen.vanity + stolen);
+      citizen.mood = Math.min(100, (citizen.mood ?? 0) + STEAL_MOOD_REWARD);
+      citizen.hunger = Math.max(0, citizen.hunger - 50);
+      if (state && stolen > 0) {
+        addChronicle(
+          state,
+          `${citizen.name} ${citizen.lastName ?? ""} slips into the shadows with ${stolen} gold.`.replace(/\s+/g, " ")
+        );
+      }
+    }
+
+    // Phase 14: ARRESTING completion — Guard reached the thief tile.
+    // Auto-resolve INLINE rather than waiting for the next monthly
+    // tickCrimeAndLaw pass. Without this, the guard reverts to IDLE
+    // (below) and loses arrestTargetId, costing one full game-month of
+    // dead air before re-dispatch — the architect-flagged race condition.
+    if (citizen.state === "ARRESTING" && state) {
+      const thief = allCitizens.find((c) => c.id === citizen.arrestTargetId);
+      if (thief && thief.state === "STEALING") {
+        const dungeon = findNearestOfType(thief.row, thief.col, buildings, "dungeon");
+        if (dungeon) {
+          thief.row = dungeon.row;
+          thief.col = dungeon.col;
+          thief.state = "IMPRISONED";
+          thief.imprisonedInId = dungeon.id;
+          thief.path = [];
+          thief.pathIndex = 0;
+          thief.progress = 0;
+          thief.targetTile = undefined;
+          thief.targetBuildingId = undefined;
+          thief.mood = 20;
+          addChronicle(
+            state,
+            `${thief.name} ${thief.lastName ?? ""} is hauled to the dungeon by ${citizen.name} ${citizen.lastName ?? ""}.`.replace(/\s+/g, " ")
+          );
+        } else {
+          // No dungeon — release with a mood penalty and a chronicle line.
+          thief.state = "IDLE";
+          thief.path = [];
+          thief.pathIndex = 0;
+          thief.targetTile = undefined;
+          thief.mood = Math.max(0, (thief.mood ?? 0) - 20);
+          addChronicle(
+            state,
+            `${citizen.name} ${citizen.lastName ?? ""} apprehends ${thief.name} ${thief.lastName ?? ""} — but with no dungeon, they are merely scolded and released.`.replace(/\s+/g, " ")
+          );
+        }
+      }
+      citizen.arrestTargetId = undefined;
+      // Falls through to the IDLE reset below, releasing the guard.
+    }
+
+    // Phase 14: HEALING completion — Doctor reached the patient. Same
+    // race-condition fix as ARRESTING: cure inline so the doctor doesn't
+    // revert to IDLE and lose the patient link for a full game-month.
+    // (targetBuildingId holds the patient citizen id — see tickDoctors.)
+    if (citizen.state === "HEALING" && state && citizen.targetBuildingId) {
+      const patient = allCitizens.find((p) => p.id === citizen.targetBuildingId);
+      if (patient && patient.isSick && patient.state !== "DEAD") {
+        const dr = Math.abs(citizen.row - patient.row);
+        const dc = Math.abs(citizen.col - patient.col);
+        if (Math.max(dr, dc) <= 2) {
+          patient.isSick = false;
+          patient.health = Math.max(HEAL_MIN_HEALTH, patient.health ?? HEAL_MIN_HEALTH);
+          patient.sickSinceMonth = undefined;
+          if (citizen.skills) citizen.skills.xp += 2;
+          addChronicle(
+            state,
+            `${citizen.name} ${citizen.lastName ?? ""} cures ${patient.name} ${patient.lastName ?? ""}.`.replace(/\s+/g, " ")
+          );
+        }
+      }
+      // Falls through to the IDLE reset below, freeing the doctor for
+      // the next acquisition pass in tickDoctors.
     }
 
     citizen.state = "IDLE";
@@ -1112,12 +1381,29 @@ export function tickDoomsayerAura(state: GameState): void {
  */
 export function runRumorMill(state: GameState): void {
   const now = state.time.totalRealMs;
+
+  // Phase 14: Pre-compute the set of tavern tiles. If a chatting pair is
+  // BOTH within TAVERN_PROXIMITY_TILES of any tavern, the rumor proximity
+  // and chat probability are doubled and contagion runs at the elevated
+  // tavern rate. Tiny up-front O(T) cost where T is tavern count.
+  const taverns = state.buildings.filter((b) => b.typeId === "tavern" && b.status !== "rubble");
+  const insideTavern = (c: Citizen): boolean => {
+    for (const t of taverns) {
+      if (Math.max(Math.abs(c.row - t.row), Math.abs(c.col - t.col)) <= TAVERN_PROXIMITY_TILES) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   // 1) Build the spatial hash. Bucket size = 2 tiles (matches proximity).
   const BUCKET = 2;
   const buckets = new Map<string, Citizen[]>();
   const eligible: Citizen[] = [];
   for (const c of state.citizens) {
-    if (c.state !== "IDLE" && c.state !== "MOVING") continue;
+    // Phase 14: DRINKING patrons participate in the rumor mill — that's the
+    // whole point of the tavern accelerator. IDLE/MOVING/DRINKING all qualify.
+    if (c.state !== "IDLE" && c.state !== "MOVING" && c.state !== "DRINKING") continue;
     eligible.push(c);
     const key = `${Math.floor(c.row / BUCKET)},${Math.floor(c.col / BUCKET)}`;
     let arr = buckets.get(key);
@@ -1144,25 +1430,40 @@ export function runRumorMill(state: GameState): void {
           const pairKey = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
           if (seen.has(pairKey)) continue;
           seen.add(pairKey);
+          // Phase 14: Tavern accelerator — both must be inside a tavern.
+          const tavernAccel = taverns.length > 0 && insideTavern(a) && insideTavern(b);
+          const radius = tavernAccel ? RUMOR_PROXIMITY_TILES * TAVERN_RUMOR_RADIUS_MUL : RUMOR_PROXIMITY_TILES;
+          const chance = tavernAccel ? Math.min(1, RUMOR_CHAT_CHANCE * TAVERN_RUMOR_CHANCE_MUL) : RUMOR_CHAT_CHANCE;
           // Final geometric check (chebyshev distance).
           const dr = Math.abs(a.row - b.row);
           const dc = Math.abs(a.col - b.col);
-          if (Math.max(dr, dc) > RUMOR_PROXIMITY_TILES) continue;
-          if (Math.random() > RUMOR_CHAT_CHANCE) continue;
+          if (Math.max(dr, dc) > radius) continue;
+          if (Math.random() > chance) continue;
           // Flip both into CHATTING and apply contagion symmetrically.
+          // (DRINKING patrons momentarily switch to CHATTING then back; the
+          // CHATTING-expiry path in updateCitizenMovement reverts to IDLE,
+          // and the next dusk roll will re-acquire a Tavern target.)
           startChat(a, b, now);
-          applyContagion(a, b);
-          applyContagion(b, a);
+          applyContagion(a, b, tavernAccel);
+          applyContagion(b, a, tavernAccel);
         }
       }
     }
   }
 }
 
-/** Phase 12: symmetric CHATTING transition. */
+/** Phase 12: symmetric CHATTING transition.
+ *  Phase 14: snapshots each citizen's prior state into chatPrevState so the
+ *  expiry branch in updateCitizenMovement can restore DRINKING patrons
+ *  back to DRINKING (instead of dropping them into IDLE and skipping the
+ *  monthly leisure/mood restore). */
 function startChat(a: Citizen, b: Citizen, nowMs: number): void {
   const until = nowMs + RUMOR_CHAT_DURATION_MS;
   // Preserve any active path so they resume walking after the chat.
+  // Only snapshot DRINKING — other states (IDLE/MOVING) are fine to
+  // collapse to IDLE on chat expiry, which is the existing Phase 12 behavior.
+  a.chatPrevState = a.state === "DRINKING" ? "DRINKING" : undefined;
+  b.chatPrevState = b.state === "DRINKING" ? "DRINKING" : undefined;
   a.state = "CHATTING";
   a.chatUntilMs = until;
   a.chatPartnerId = b.id;
@@ -1172,12 +1473,15 @@ function startChat(a: Citizen, b: Citizen, nowMs: number): void {
 }
 
 /**
- * Phase 12: Contagion from carrier `from` → susceptible `to`.
+ * Phase 12 + 14: Contagion from carrier `from` → susceptible `to`.
  *  • Rebel → Royalist : 25% chance to add dissent. At ≥80 dissent + ≥60
  *    vanity, the royalist flips to rebel (joins the rebellion).
  *  • Heretic (faith < 20) → believer : -5 faith.
+ *  • Phase 14: Sick → Healthy : base 15% chance to flip isSick=true; the
+ *    runRumorMill caller passes tavernAccel=true when both citizens are
+ *    inside a Tavern, doubling the flip chance.
  */
-function applyContagion(from: Citizen, to: Citizen): void {
+function applyContagion(from: Citizen, to: Citizen, tavernAccel: boolean = false): void {
   // Rebellion contagion
   if (from.faction === "rebel" && to.faction === "royalist") {
     if (Math.random() < RUMOR_DISSENT_CHANCE) {
@@ -1191,6 +1495,15 @@ function applyContagion(from: Citizen, to: Citizen): void {
   // Faith contagion (heresy spreads from low-faith carriers)
   if (from.faith < RUMOR_HERETIC_FAITH_THRESHOLD && to.faith >= RUMOR_HERETIC_FAITH_THRESHOLD) {
     to.faith = Math.max(0, to.faith - RUMOR_HERETIC_FAITH_LOSS);
+  }
+  // Phase 14: Plague contagion via close conversation. Royalty are kept
+  // immune for game-balance reasons (the succession engine assumes the
+  // King doesn't randomly drop dead from plague). Tavern doubles the flip.
+  if (from.isSick && !to.isSick && !to.isKing && !to.isQueen && (to.health ?? 100) > 0) {
+    const chance = tavernAccel ? CONTAGION_CHANCE_TAVERN : CONTAGION_CHANCE_NORMAL;
+    if (Math.random() < chance) {
+      to.isSick = true;
+    }
   }
 }
 
@@ -1219,6 +1532,318 @@ function findNearestHome(
   return best;
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Phase 14: Living City Expansion — generic nearest-of-typeId helpers      */
+/* -------------------------------------------------------------------------- */
+
+function findNearestOfType(
+  row: number,
+  col: number,
+  buildings: Building[],
+  typeId: BuildingId
+): Building | null {
+  let best: Building | null = null;
+  let bestDist = Infinity;
+  for (const b of buildings) {
+    if (b.typeId !== typeId) continue;
+    if (b.status === "rubble") continue;
+    const d = Math.abs(b.row - row) + Math.abs(b.col - col);
+    if (d < bestDist) {
+      bestDist = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
+/** Find nearest non-self-owned house — used as a STEALING target. */
+function findNearestNonOwnHouse(citizen: Citizen, buildings: Building[]): Building | null {
+  let best: Building | null = null;
+  let bestDist = Infinity;
+  for (const b of buildings) {
+    if (b.typeId !== "house_free" && b.typeId !== "house_middle" && b.typeId !== "house_high") continue;
+    if (b.id === citizen.homeBuildingId) continue;
+    if (b.status === "rubble") continue;
+    const d = Math.abs(b.row - citizen.row) + Math.abs(b.col - citizen.col);
+    if (d < bestDist) {
+      bestDist = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Phase 14: Crime & Law tick — desperation crime + guard arrests            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Phase 14: Once-per-month pass that fires AFTER tickCitizenMonth on every
+ * NPC. Three responsibilities:
+ *
+ *   1. Crime ignition: any non-imprisoned, non-royal, non-broken NPC whose
+ *      hunger > CRIME_TRIGGER_HUNGER OR whose mood is 0 will roll their
+ *      morality. If `Math.random() * 100 > morality` they flip to STEALING
+ *      and path to a non-own house (or the treasury if there are none).
+ *
+ *   2. Guard dispatch: for each STEALING citizen, scan all Guards within
+ *      ARREST_RADIUS_TILES (chebyshev). Closest IDLE/MOVING/WORKING Guard
+ *      is co-opted into ARRESTING the thief, gaining a path to the thief
+ *      tile and recording arrestTargetId for the resolution branch below.
+ *
+ *   3. Arrest resolution: any ARRESTING Guard within ARREST_RADIUS_TILES
+ *      of their target THIS PASS teleports both into the nearest dungeon.
+ *      Thief is IMPRISONED, Guard reverts to IDLE.
+ *
+ * Designed to be cheap (O(N) + O(N×G) on the small Guard set) so it can
+ * run unconditionally every month tick alongside the existing royalty
+ * and rumor logic.
+ */
+export function tickCrimeAndLaw(state: GameState): void {
+  const buildings = state.buildings;
+  const civ = state.civilization;
+  const grid = state.grid;
+
+  // Pass 1 — Crime ignition.
+  for (const c of state.citizens) {
+    if (c.state === "DEAD" || c.state === "IMPRISONED") continue;
+    if (c.state === "STEALING" || c.state === "ARRESTING") continue;
+    if (c.state === "MENTAL_BREAK" || c.state === "PRAYING") continue;
+    if (c.state === "SLEEPING" || c.state === "DRINKING" || c.state === "HEALING") continue;
+    if (c.state === "COMBAT" || c.state === "FLEEING") continue;
+    if (c.isKing || c.isQueen || c.isDowagerQueen) continue;
+    const desperate = c.hunger > CRIME_TRIGGER_HUNGER || (c.mood ?? 100) === 0;
+    if (!desperate) continue;
+    const morality = c.morality ?? 50;
+    if (Math.random() * 100 <= morality) continue; // morality held — no theft
+
+    // Pick a target — preferring a non-own house, falling back to treasury.
+    const targetBuilding = findNearestNonOwnHouse(c, buildings);
+    const target = targetBuilding
+      ? { row: targetBuilding.row, col: targetBuilding.col, buildingId: targetBuilding.id }
+      : { row: civ.founded.row, col: civ.founded.col, buildingId: undefined as string | undefined };
+    const path = findPath(grid, c.row, c.col, target.row, target.col);
+    if (!path || path.length === 0) continue; // target unreachable; skip silently
+    c.state = "STEALING";
+    c.path = path;
+    c.pathIndex = 0;
+    c.progress = 0;
+    c.targetTile = { row: target.row, col: target.col };
+    c.targetBuildingId = target.buildingId;
+    addChronicle(
+      state,
+      `${c.name} ${c.lastName ?? ""}, desperate, slips out to steal.`.replace(/\s+/g, " ")
+    );
+  }
+
+  // Pass 2 — Dispatch a Guard to each STEALING NPC who isn't already targeted.
+  const guards = state.citizens.filter(
+    (g) => g.profession === "Guard" &&
+      (g.state === "IDLE" || g.state === "MOVING" || g.state === "WORKING")
+  );
+  if (guards.length > 0) {
+    for (const thief of state.citizens) {
+      if (thief.state !== "STEALING") continue;
+      // Already being arrested?
+      if (state.citizens.some((g) => g.state === "ARRESTING" && g.arrestTargetId === thief.id)) continue;
+      // Find the closest available guard within ARREST_RADIUS_TILES.
+      let bestGuard: Citizen | null = null;
+      let bestDist = Infinity;
+      for (const g of guards) {
+        if (g.state === "ARRESTING") continue; // already busy from this same pass
+        const dr = Math.abs(g.row - thief.row);
+        const dc = Math.abs(g.col - thief.col);
+        const d = Math.max(dr, dc);
+        if (d > ARREST_RADIUS_TILES) continue;
+        if (d < bestDist) {
+          bestDist = d;
+          bestGuard = g;
+        }
+      }
+      if (!bestGuard) continue;
+      const path = findPath(grid, bestGuard.row, bestGuard.col, thief.row, thief.col);
+      if (!path || path.length === 0) continue;
+      bestGuard.state = "ARRESTING";
+      bestGuard.arrestTargetId = thief.id;
+      bestGuard.path = path;
+      bestGuard.pathIndex = 0;
+      bestGuard.progress = 0;
+      bestGuard.targetTile = { row: thief.row, col: thief.col };
+      bestGuard.targetBuildingId = undefined;
+    }
+  }
+
+  // Pass 3 — Resolve any arrest where guard is within range of the thief.
+  for (const guard of state.citizens) {
+    if (guard.state !== "ARRESTING") continue;
+    const thief = state.citizens.find((c) => c.id === guard.arrestTargetId);
+    if (!thief || thief.state !== "STEALING") {
+      // Thief escaped / died / was already arrested — release the guard.
+      guard.state = "IDLE";
+      guard.arrestTargetId = undefined;
+      guard.path = [];
+      guard.pathIndex = 0;
+      guard.targetTile = undefined;
+      continue;
+    }
+    const dr = Math.abs(guard.row - thief.row);
+    const dc = Math.abs(guard.col - thief.col);
+    if (Math.max(dr, dc) > ARREST_RADIUS_TILES) continue; // still chasing
+
+    const dungeon = findNearestOfType(thief.row, thief.col, buildings, "dungeon");
+    if (!dungeon) {
+      // No dungeon exists — guard knocks the thief out and they revert to IDLE.
+      // (This happens once if the player hasn't built a dungeon yet.)
+      thief.state = "IDLE";
+      thief.path = [];
+      thief.pathIndex = 0;
+      thief.targetTile = undefined;
+      thief.mood = Math.max(0, (thief.mood ?? 0) - 20);
+      guard.state = "IDLE";
+      guard.arrestTargetId = undefined;
+      guard.path = [];
+      guard.pathIndex = 0;
+      guard.targetTile = undefined;
+      addChronicle(
+        state,
+        `${guard.name} ${guard.lastName ?? ""} apprehends ${thief.name} ${thief.lastName ?? ""} — but with no dungeon, they are merely scolded and released.`.replace(/\s+/g, " ")
+      );
+      continue;
+    }
+    // Teleport the thief into the dungeon and lock them up.
+    thief.row = dungeon.row;
+    thief.col = dungeon.col;
+    thief.state = "IMPRISONED";
+    thief.imprisonedInId = dungeon.id;
+    thief.path = [];
+    thief.pathIndex = 0;
+    thief.progress = 0;
+    thief.targetTile = undefined;
+    thief.targetBuildingId = undefined;
+    thief.mood = 20; // sentence to serve until mood >= 50
+    // Guard stands down.
+    guard.state = "IDLE";
+    guard.arrestTargetId = undefined;
+    guard.path = [];
+    guard.pathIndex = 0;
+    guard.progress = 0;
+    guard.targetTile = undefined;
+    addChronicle(
+      state,
+      `${thief.name} ${thief.lastName ?? ""} is hauled to the dungeon by ${guard.name} ${guard.lastName ?? ""}.`.replace(/\s+/g, " ")
+    );
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Phase 14: Medical Engine — Doctor pathing & cure resolution               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Phase 14: Doctors hunt SICK citizens within DOCTOR_SCAN_RADIUS each month.
+ *  - Idle/Moving/Working Doctors with no patient acquire the nearest sick
+ *    citizen (chebyshev), flip to HEALING, and path to the patient.
+ *  - HEALING Doctors who are within 2 tiles of their patient apply the cure
+ *    instantly: patient.isSick=false, patient.health = max(50, current).
+ *    Doctor reverts to IDLE.
+ */
+export function tickDoctors(state: GameState): void {
+  const grid = state.grid;
+  const doctors = state.citizens.filter(
+    (d) => d.profession === "Doctor" && d.state !== "DEAD" &&
+      d.state !== "IMPRISONED" && d.state !== "MENTAL_BREAK"
+  );
+  if (doctors.length === 0) return;
+
+  // Resolve any HEALING doctor already adjacent to a patient first — they
+  // get priority over fresh acquisition so a long-traveling doctor finishes.
+  for (const d of doctors) {
+    if (d.state !== "HEALING") continue;
+    const patient = state.citizens.find((p) => p.id === d.targetBuildingId);
+    // We re-purpose targetBuildingId to hold the patient id (cheap, no
+    // new citizen field needed). If the patient cured/died/escaped, drop it.
+    if (!patient || patient.state === "DEAD" || !patient.isSick) {
+      d.state = "IDLE";
+      d.targetBuildingId = undefined;
+      d.path = [];
+      d.pathIndex = 0;
+      continue;
+    }
+    const dr = Math.abs(d.row - patient.row);
+    const dc = Math.abs(d.col - patient.col);
+    if (Math.max(dr, dc) <= 2) {
+      patient.isSick = false;
+      patient.health = Math.max(HEAL_MIN_HEALTH, patient.health ?? HEAL_MIN_HEALTH);
+      patient.sickSinceMonth = undefined;
+      if (d.skills) d.skills.xp += 2;
+      d.state = "IDLE";
+      d.targetBuildingId = undefined;
+      d.path = [];
+      d.pathIndex = 0;
+      d.progress = 0;
+      addChronicle(
+        state,
+        `${d.name} ${d.lastName ?? ""} cures ${patient.name} ${patient.lastName ?? ""}.`.replace(/\s+/g, " ")
+      );
+    }
+  }
+
+  // Acquire fresh patients for IDLE/MOVING/WORKING doctors.
+  for (const d of doctors) {
+    if (d.state === "HEALING") continue;
+    if (d.state !== "IDLE" && d.state !== "MOVING" && d.state !== "WORKING") continue;
+    let bestPatient: Citizen | null = null;
+    let bestDist = Infinity;
+    for (const p of state.citizens) {
+      if (!p.isSick) continue;
+      if (p.state === "DEAD" || p.state === "IMPRISONED") continue;
+      if (p.id === d.id) continue; // doctors heal themselves passively
+      const dr = Math.abs(p.row - d.row);
+      const dc = Math.abs(p.col - d.col);
+      const dist = Math.max(dr, dc);
+      if (dist > DOCTOR_SCAN_RADIUS) continue;
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestPatient = p;
+      }
+    }
+    if (!bestPatient) continue;
+    const path = findPath(grid, d.row, d.col, bestPatient.row, bestPatient.col);
+    if (!path || path.length === 0) continue;
+    d.state = "HEALING";
+    d.targetBuildingId = bestPatient.id; // re-purposed slot, see resolution above
+    d.path = path;
+    d.pathIndex = 0;
+    d.progress = 0;
+    d.targetTile = { row: bestPatient.row, col: bestPatient.col };
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Phase 14: Civic leisure aggregation — feeds the Civic Needs panel.        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Aggregate the per-citizen leisure debt into the civilization-level
+ * needs.leisure.value so the HUD orange bar reflects population restlessness.
+ * Called once per simulateMonth(). The `decay` already added by the
+ * tickCivilization pass is preserved — we only nudge the bar toward the
+ * average per-citizen value, not overwrite it.
+ */
+export function tickLeisureCivic(state: GameState): void {
+  const civ = state.civilization;
+  if (!civ.needs.leisure) return;
+  const living = state.citizens.filter((c) => c.state !== "DEAD");
+  if (living.length === 0) return;
+  let sum = 0;
+  for (const c of living) sum += c.leisure ?? 0;
+  const avg = sum / living.length;
+  // Linear blend toward the per-citizen average (50/50 mix). Avoids the
+  // value snapping to 0 the instant the player builds a tavern, but lets
+  // the bar respond to changes within a couple of months.
+  civ.needs.leisure.value = Math.max(0, Math.min(100, (civ.needs.leisure.value + avg) * 0.5));
+}
+
 /**
  * Called at the start of a Night month. All non-DEAD, non-King NPCs path to
  * the nearest residential building. Those who can't reach one sleep outside
@@ -1228,10 +1853,54 @@ function findNearestHome(
  * Dowager Queen as the de-facto guards/defenders that don't sleep.
  */
 export function processNightSleep(state: GameState, grid: Grid, buildings: Building[]): void {
+  // Phase 14: dusk pathing — off-duty adults with leisure>30 may detour to
+  // a Tavern instead of going straight home. Capped by TAVERN_CAPACITY so
+  // a single tavern can't host the entire realm. Computed once per dusk
+  // so we only need one filter pass per call.
+  const taverns = buildings.filter((b) => b.typeId === "tavern" && b.status !== "rubble");
+  let drinkingCount = state.citizens.filter((c) => c.state === "DRINKING").length;
+
   for (const c of state.citizens) {
     if (c.state === "DEAD") continue;
     if (c.isKing || c.isDowagerQueen) continue;
     if (c.state === "PRAYING") continue; // pious citizens kneel through the night
+    // Phase 14: STEALING/ARRESTING/IMPRISONED/HEALING NPCs ignore sleep —
+    // they're mid-pursuit/imprisoned and resolve via their own state machine.
+    if (c.state === "STEALING" || c.state === "ARRESTING" || c.state === "IMPRISONED" || c.state === "HEALING") continue;
+
+    // Phase 14: dusk Tavern roll — independent of the home pathing below.
+    if (
+      taverns.length > 0 &&
+      drinkingCount < TAVERN_CAPACITY &&
+      (c.leisure ?? 0) > TAVERN_LEISURE_THRESHOLD &&
+      c.profession !== "Guard" && // guards work the night shift
+      Math.random() < TAVERN_VISIT_CHANCE
+    ) {
+      // Pick the nearest tavern with capacity.
+      let bestTavern: Building | null = null;
+      let bestDist = Infinity;
+      for (const t of taverns) {
+        const d = Math.abs(t.row - c.row) + Math.abs(t.col - c.col);
+        if (d < bestDist) { bestDist = d; bestTavern = t; }
+      }
+      if (bestTavern) {
+        const path = findPath(grid, c.row, c.col, bestTavern.row, bestTavern.col);
+        if (path && path.length > 0) {
+          // Snap to the tavern (sleep semantics — "by midnight"), so the
+          // patron is immediately inside for tavern-accelerated rumor mill.
+          c.row = bestTavern.row;
+          c.col = bestTavern.col;
+          c.state = "DRINKING";
+          c.path = [];
+          c.pathIndex = 0;
+          c.progress = 0;
+          c.targetTile = { row: bestTavern.row, col: bestTavern.col };
+          c.targetBuildingId = bestTavern.id;
+          drinkingCount++;
+          continue; // skip the home pathing branch
+        }
+      }
+    }
 
     const home = findNearestHome(c.row, c.col, buildings);
     if (!home) {

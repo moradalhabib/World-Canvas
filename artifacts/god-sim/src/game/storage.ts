@@ -29,8 +29,15 @@ const SAVE_KEY = "god_sim_state";
  *  v10: + Phase 13 Dynamic Climate & Ecosystem Engine — adds currentSeason,
  *        currentWeather, lastWeatherRollMonth on GameState. Migration backfills
  *        from gameMonth (season is deterministic) and seeds CLEAR weather.
+ *  v11: + Phase 14 Living City Expansion (Crime, Medicine, Leisure) — adds
+ *        morality/health/leisure/isSick/sickSinceMonth/arrestTargetId/
+ *        imprisonedInId on every citizen, leisure on civ.needs, plus 3 new
+ *        building kinds (dungeon, apothecary, tavern) and 5 new citizen
+ *        states (STEALING, ARRESTING, IMPRISONED, HEALING, DRINKING).
+ *        normalizeCitizens backfills the per-citizen fields; civ.needs.leisure
+ *        is patched in below if absent.
  */
-const CURRENT_VERSION = 10;
+const CURRENT_VERSION = 11;
 const INITIAL_CITIZEN_COUNT = 6;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;
@@ -245,7 +252,8 @@ export function loadState(): GameState | null {
       s.version !== 6 &&
       s.version !== 7 &&
       s.version !== 8 &&
-      s.version !== 9
+      s.version !== 9 &&
+      s.version !== 10 // Phase 13 saves migrate cleanly to Phase 14
     ) {
       return null;
     }
@@ -257,6 +265,7 @@ export function loadState(): GameState | null {
     let citizens: Citizen[];
     if (
       (s.version === CURRENT_VERSION ||
+        s.version === 10 ||
         s.version === 9 ||
         s.version === 8 ||
         s.version === 7 ||
@@ -279,6 +288,14 @@ export function loadState(): GameState | null {
       ...b,
       status: b.status ?? "intact",
     }));
+
+    // Phase 14 backfill: older saves predate the leisure civic need. Patch
+    // the needs record in-place so the HUD doesn't blow up on the missing
+    // entry. Default mirrors createDefaultCivilization() so a migrated
+    // realm and a fresh realm start from the same baseline.
+    if (civilization && civilization.needs && !civilization.needs.leisure) {
+      civilization.needs.leisure = { value: 25, weight: 0.8, decay: 1.2 };
+    }
 
     const state: GameState = {
       version: CURRENT_VERSION,

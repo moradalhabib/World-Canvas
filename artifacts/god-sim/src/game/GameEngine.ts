@@ -15,6 +15,8 @@ import {
 } from "./storage";
 import { getBuildingDef } from "./buildings";
 import { tickCivilizationMonth } from "./civilization";
+// Phase 14: Living City Expansion — crime/medical/leisure ticks live in npc.ts
+// and are wired into simulateMonth() right after the per-citizen brain pass.
 import { DesirabilityMap } from "./desirability";
 import { planAndBuild, tryUpgradeHouses } from "./buildAI";
 import {
@@ -22,6 +24,9 @@ import {
   tickCitizenMonth,
   updateCitizenMovement,
   processNightSleep,
+  tickCrimeAndLaw,
+  tickDoctors,
+  tickLeisureCivic,
   // Phase 12: Societal Fabric Engine
   tickDoomsayerAura,
   runRumorMill,
@@ -432,6 +437,19 @@ export class GameEngine {
     // (drains -1 faith from each citizen within 3 tiles of any active
     // DOOMSAYER). Cheap when no doomsayers exist; O(D × N) otherwise.
     tickDoomsayerAura(this.state);
+
+    // Phase 14: Living City Expansion — three single-pass O(N) ticks that
+    // resolve crime, medicine, and leisure aggregation. Order matters:
+    //   1. tickCrimeAndLaw FIRST — desperate NPCs flip to STEALING and
+    //      Guards path to arrest. Without this first, a sick thief could
+    //      be cured before being arrested.
+    //   2. tickDoctors SECOND — Doctors acquire/heal SICK patients. Run
+    //      after crime so an arrested-then-imprisoned NPC isn't double-targeted.
+    //   3. tickLeisureCivic LAST — aggregate per-citizen leisure into the
+    //      civilization-level Civic Needs HUD bar.
+    tickCrimeAndLaw(this.state);
+    tickDoctors(this.state);
+    tickLeisureCivic(this.state);
 
     // Phase 3B: once per game-year, run aging, natural death, heir maturity
     // and royal reproduction. We compare to lastRoyalYearTicked rather than
@@ -1115,8 +1133,12 @@ export class GameEngine {
     const px = x + pad;
     const py = y + pad;
 
-    if (def.category === "service") {
-      // Service (well / etc.) — circular with rim shading + glint
+    // Phase 14: only the well keeps the round well-head silhouette. The new
+    // service buildings (dungeon / apothecary / tavern) fall through to the
+    // generic iso building path below — their distinct fillColor + roofColor
+    // + glyph overlay (drawn at high zoom) give them visual identity.
+    if (def.category === "service" && b.typeId === "well") {
+      // Service (well) — circular with rim shading + glint
       const cx = x + ts * 0.5;
       const cy = y + ts * 0.5;
       // shadow
@@ -1292,6 +1314,37 @@ export class GameEngine {
       ctx.arc(x + ts * 0.5, py - h * 0.10, ts * 0.07, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
+    }
+
+    // Phase 14: glyph badge for the three new building kinds. Drawn just
+    // above the roof peak so it reads as a "sign" hanging over the door.
+    // Skipped at very low zoom to keep the world overview readable.
+    if (
+      this.state.camera.zoom > 0.5 &&
+      (b.typeId === "dungeon" || b.typeId === "apothecary" || b.typeId === "tavern")
+    ) {
+      const glyph = b.typeId === "dungeon" ? "‖" : b.typeId === "apothecary" ? "+" : "🍺";
+      const color = b.typeId === "dungeon" ? "#9aa3ad" : b.typeId === "apothecary" ? "#e84545" : "#d4a04a";
+      const badgeCx = x + ts * 0.5;
+      const badgeCy = roofPeakY - ts * 0.10;
+      // Halo for legibility
+      const haloR = ts * 0.13;
+      const grad = ctx.createRadialGradient(badgeCx, badgeCy, 0, badgeCx, badgeCy, haloR);
+      grad.addColorStop(0, color + "cc");
+      grad.addColorStop(1, color + "00");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(badgeCx, badgeCy, haloR, 0, Math.PI * 2);
+      ctx.fill();
+      // Glyph
+      ctx.fillStyle = "#0d1117";
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1, ts * 0.012);
+      ctx.font = `bold ${Math.round(ts * 0.22)}px Georgia, serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.strokeText(glyph, badgeCx, badgeCy);
+      ctx.fillText(glyph, badgeCx, badgeCy);
     }
 
     // Window glow at night
@@ -2032,6 +2085,24 @@ export class GameEngine {
         ctx.stroke();
       }
 
+      /* ---------- Phase 14: Sick aura — three wobbling green dots ----------
+       * Cheap (3 fills, no per-particle pool) and only drawn when the citizen
+       * is flagged isSick AND camera zoom is high enough to read the sprite
+       * detail. Provides instant visual triage for plague spread.
+       */
+      if (c.isSick && cam.zoom > 0.4) {
+        const auraCy = cy - ts * 0.55;
+        ctx.fillStyle = "rgba(120, 220, 120, 0.75)";
+        for (let i = 0; i < 3; i++) {
+          const phase = t * 2 + i * 2.1 + c.hue;
+          const ax = cx + Math.cos(phase) * ts * 0.08;
+          const ay = auraCy + Math.sin(phase * 1.3) * ts * 0.04;
+          ctx.beginPath();
+          ctx.arc(ax, ay, ts * 0.025, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
       if (lifeScale !== 1) ctx.restore();
 
       /* ---------- Phase 12: Chat bubble + Mental-Break overlays ----------
@@ -2063,12 +2134,27 @@ export class GameEngine {
             ctx.arc(cx + i * dotGap, bubbleCy, dotR, 0, Math.PI * 2);
             ctx.fill();
           }
-        } else if (c.state === "MENTAL_BREAK") {
+        } else if (
+          c.state === "MENTAL_BREAK" ||
+          c.state === "STEALING" ||
+          c.state === "ARRESTING" ||
+          c.state === "IMPRISONED" ||
+          c.state === "HEALING" ||
+          c.state === "DRINKING"
+        ) {
           let glyph = "?";
           let color = "#ffd64a";
-          if (c.breakKind === "DOOMSAYER") { glyph = "!"; color = "#ff4848"; }
-          else if (c.breakKind === "RECLUSE") { glyph = "?"; color = "#9aa6c0"; }
-          else if (c.breakKind === "THIEF")   { glyph = "$"; color = "#ffd64a"; }
+          if (c.state === "MENTAL_BREAK") {
+            if (c.breakKind === "DOOMSAYER") { glyph = "!"; color = "#ff4848"; }
+            else if (c.breakKind === "RECLUSE") { glyph = "?"; color = "#9aa6c0"; }
+            else if (c.breakKind === "THIEF")   { glyph = "$"; color = "#ffd64a"; }
+          }
+          // Phase 14 — Living City Expansion overlays
+          else if (c.state === "STEALING")    { glyph = "$"; color = "#ff9933"; }
+          else if (c.state === "ARRESTING")   { glyph = "!"; color = "#3aa1ff"; }
+          else if (c.state === "IMPRISONED")  { glyph = "‖"; color = "#9aa3ad"; }
+          else if (c.state === "HEALING")     { glyph = "+"; color = "#5fd16f"; }
+          else if (c.state === "DRINKING")    { glyph = "🍺"; color = "#e8b85a"; }
           // Soft halo behind the glyph for legibility on bright tiles.
           const haloR = ts * 0.16;
           const grad = ctx.createRadialGradient(cx, bubbleCy, ts * 0.02, cx, bubbleCy, haloR);
