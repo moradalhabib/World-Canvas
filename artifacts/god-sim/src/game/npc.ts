@@ -32,7 +32,12 @@ function nextId(): string {
   return `npc_${Date.now().toString(36)}_${citizenCounter}`;
 }
 
-export function createCitizen(row: number, col: number, hue: number): Citizen {
+export function createCitizen(
+  row: number,
+  col: number,
+  hue: number,
+  socialTier: Citizen["socialTier"] = "peasant"
+): Citizen {
   return {
     id: nextId(),
     row,
@@ -45,6 +50,7 @@ export function createCitizen(row: number, col: number, hue: number): Citizen {
     faith: Math.floor(Math.random() * 101),       // spec: faith randomized 0-100
     crisisTimer: 0,                               // spec: crisisTimer starts at 0
     hue,
+    socialTier,
   };
 }
 
@@ -71,7 +77,10 @@ export function spawnInitialCitizens(
         if (used.has(key)) continue;
         used.add(key);
         const hue = Math.round((out.length * 360) / count);
-        out.push(createCitizen(r, c, hue));
+        // First citizen is the King; ~15% of remainder are Nobles; rest peasants.
+        const tier: Citizen["socialTier"] =
+          out.length === 0 ? "king" : Math.random() < 0.15 ? "noble" : "peasant";
+        out.push(createCitizen(r, c, hue, tier));
       }
     }
   }
@@ -95,6 +104,9 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
     if (typeof c.progress !== "number") c.progress = 0;
     if (!Array.isArray(c.path)) c.path = [];
     if (typeof c.pathIndex !== "number") c.pathIndex = 0;
+    if (c.socialTier !== "king" && c.socialTier !== "noble" && c.socialTier !== "peasant") {
+      c.socialTier = "peasant";
+    }
     // Legacy state values that no longer exist map to IDLE
     const validStates = new Set([
       "IDLE",

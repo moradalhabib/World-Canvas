@@ -250,4 +250,6 @@ export interface Citizen {
   crisisTimer: number;
   /** Hue rotation for visual variation (0..359). */
   hue: number;
+  /** Social tier — drives sprite color + crown rendering. */
+  socialTier: "peasant" | "noble" | "king";
 }
