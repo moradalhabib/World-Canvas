@@ -2,10 +2,12 @@ import type {
   Building,
   Citizen,
   CivilizationState,
+  CitizenTrait,
   GameState,
   Grid,
   Profession,
 } from "./types";
+import { ALL_TRAITS } from "./types";
 import { findPath, isWalkable } from "./pathfinding";
 import {
   ELDER_AGE,
@@ -43,6 +45,17 @@ const VANITY_REBEL_THRESHOLD = 80;    // wealthy enough to bankroll rebellion
 const HOUSE_DEPOSIT_RADIUS = 3;       // tiles — proximity for converting goods
 const VANITY_PER_GOOD = 2;            // vanity per banked unit of goods
 const TREASURY_PER_GOOD = 1;          // gold per banked unit of goods (civ tax)
+
+/* Phase 9: Psychology & Mastery tunables */
+const GRUDGE_OPINION = -100;        // score logged when an NPC witnesses an attack
+const WITNESS_RADIUS = 5;           // tiles — bystanders within this range remember the attacker
+const XP_PER_BANK = 10;             // xp granted on a successful goods → gold conversion
+const XP_PER_LEVEL = 100;           // xp needed to level up
+const ZEALOT_FAITH_DECAY = 0.5;     // per game-month
+const NORMAL_FAITH_DECAY = 1;       // per game-month
+const DILIGENT_HUNGER_MUL = 1.2;    // hunger rises 20% faster
+const DILIGENT_YIELD_MUL = 1.15;    // base goods generation +15%
+const GREEDY_NOBLE_MUL = 2;         // doubles VANITY_NOBLE_THRESHOLD before upgrade
 
 /* Phase 6: Sleep & Safety */
 const HOMELESS_SAFETY_PENALTY = 35;       // safety lost when sleeping outside
@@ -92,7 +105,56 @@ export function createCitizen(
     profession: opts.profession ?? "None",
     goods: 0,
     faction: "neutral",
+    // Phase 9: Pick a trait, init skills + empty memory graph.
+    trait: ALL_TRAITS[Math.floor(Math.random() * ALL_TRAITS.length)],
+    skills: { level: 1, xp: 0 },
+    memory: {},
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Phase 9: Memory graph helpers (O(1) lookup, exported for the engine)       */
+/* -------------------------------------------------------------------------- */
+
+/** Log a grudge from `victim` against `attackerId`. Idempotent. */
+export function recordGrudge(victim: Citizen, attackerId: string): void {
+  if (!victim.memory) victim.memory = {};
+  // Use the worst (most negative) opinion we've ever held — never soften.
+  const prev = victim.memory[attackerId] ?? 0;
+  if (GRUDGE_OPINION < prev) victim.memory[attackerId] = GRUDGE_OPINION;
+}
+
+/** True if `c` holds a negative opinion of `otherId`. */
+export function hasGrudge(c: Citizen, otherId: string): boolean {
+  if (!c.memory) return false;
+  return (c.memory[otherId] ?? 0) < 0;
+}
+
+/**
+ * Phase 9: Spread the witness penalty for a freshly-started fight.
+ * Every living NPC within WITNESS_RADIUS of either combatant logs a grudge
+ * against both. Combatants always grudge each other directly.
+ *
+ * O(N) per call, but only fires once per fight (in startCombat) — never
+ * per frame — so it does not affect the steady-state frame rate.
+ */
+export function recordCombatWitnesses(
+  attacker: Citizen,
+  defender: Citizen,
+  allCitizens: Citizen[]
+): void {
+  recordGrudge(attacker, defender.id);
+  recordGrudge(defender, attacker.id);
+  for (const w of allCitizens) {
+    if (w.state === "DEAD") continue;
+    if (w.id === attacker.id || w.id === defender.id) continue;
+    const dra = Math.abs(w.row - attacker.row);
+    const dca = Math.abs(w.col - attacker.col);
+    const drb = Math.abs(w.row - defender.row);
+    const dcb = Math.abs(w.col - defender.col);
+    if (Math.max(dra, dca) <= WITNESS_RADIUS) recordGrudge(w, attacker.id);
+    if (Math.max(drb, dcb) <= WITNESS_RADIUS) recordGrudge(w, defender.id);
+  }
 }
 
 /** Phase 4: deterministic-ish profession spread for adult founders. */
@@ -179,6 +241,20 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
     if (c.faction !== "rebel" && c.faction !== "royalist" && c.faction !== "neutral") {
       c.faction = "neutral";
     }
+    // Phase 9 backfill — older saves predate trait/skills/memory.
+    if (!c.trait || !ALL_TRAITS.includes(c.trait)) {
+      c.trait = ALL_TRAITS[Math.floor(Math.random() * ALL_TRAITS.length)];
+    }
+    if (
+      !c.skills ||
+      typeof c.skills.level !== "number" ||
+      typeof c.skills.xp !== "number"
+    ) {
+      c.skills = { level: 1, xp: 0 };
+    }
+    if (!c.memory || typeof c.memory !== "object" || Array.isArray(c.memory)) {
+      c.memory = {};
+    }
     // Legacy state values that no longer exist map to IDLE
     const validStates = new Set([
       "IDLE",
@@ -192,6 +268,7 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
       "SLEEPING",
       "REBEL",
       "COMBAT",
+      "FLEEING",
     ]);
     if (!validStates.has(c.state as string)) c.state = "IDLE";
   }
@@ -271,11 +348,19 @@ function tickEconomyAndFaction(
   if (citizen.isKing || citizen.isQueen || citizen.isDowagerQueen) return;
 
   // 1) Production
+  // Phase 9: mastery yield = (1 + level * 0.1); Diligent gets a flat +15%.
   const prof = citizen.profession ?? "None";
+  const lvl = citizen.skills?.level ?? 1;
+  const masteryMul = 1 + lvl * 0.1;
+  const traitYieldMul = citizen.trait === "Diligent" ? DILIGENT_YIELD_MUL : 1;
   if (prof === "Farmer") {
-    citizen.goods = (citizen.goods ?? 0) + GOODS_PER_MONTH_FARMER;
+    citizen.goods =
+      (citizen.goods ?? 0) +
+      GOODS_PER_MONTH_FARMER * masteryMul * traitYieldMul;
   } else if (prof === "Miner") {
-    citizen.goods = (citizen.goods ?? 0) + GOODS_PER_MONTH_MINER;
+    citizen.goods =
+      (citizen.goods ?? 0) +
+      GOODS_PER_MONTH_MINER * masteryMul * traitYieldMul;
   } else if (prof === "Guard") {
     // Guards are paid a small stipend out of the treasury — keeps them loyal.
     citizen.vanity = Math.min(999, citizen.vanity + GUARD_STIPEND_VANITY);
@@ -297,11 +382,30 @@ function tickEconomyAndFaction(
       civ.treasury += goods * TREASURY_PER_GOOD;
       civ.resources.gold = civ.treasury;
       citizen.goods = 0;
+
+      // Phase 9: a successful goods → gold conversion grants profession XP.
+      // Only Farmers/Miners actually accumulate raw goods to bank, so guards
+      // never level up here — that mirrors "their assigned profession".
+      if (prof === "Farmer" || prof === "Miner") {
+        if (!citizen.skills) citizen.skills = { level: 1, xp: 0 };
+        citizen.skills.xp += XP_PER_BANK;
+        if (citizen.skills.xp >= XP_PER_LEVEL) {
+          citizen.skills.level += 1;
+          citizen.skills.xp = 0;
+          addChronicle(
+            state,
+            `${citizen.name} the ${prof} reaches mastery level ${citizen.skills.level}.`
+          );
+        }
+      }
     }
   }
 
   // 3) Visual upgrade — wealthy commoners become Noble-class sprites.
-  if (citizen.socialTier === "peasant" && citizen.vanity >= VANITY_NOBLE_THRESHOLD) {
+  // Phase 9: Greedy NPCs require double the wealth to climb the social ladder.
+  const nobleThreshold =
+    VANITY_NOBLE_THRESHOLD * (citizen.trait === "Greedy" ? GREEDY_NOBLE_MUL : 1);
+  if (citizen.socialTier === "peasant" && citizen.vanity >= nobleThreshold) {
     citizen.socialTier = "noble";
     addChronicle(state, `${citizen.name} has grown wealthy and risen to the noble class.`);
   }
@@ -430,13 +534,22 @@ export function tickCitizenMonth(
 
   // --- 3. Living, non-crisis: hunger ticks up ------------------------------
   // Phase 5: Winter doubles the rate at which everyone gets hungry.
+  // Phase 9: Diligent NPCs work harder and burn through food 20% faster.
   const winterMul = state?.winterActive ? 2 : 1;
+  const traitHungerMul = citizen.trait === "Diligent" ? DILIGENT_HUNGER_MUL : 1;
   citizen.hunger = Math.min(
     100,
     citizen.hunger +
-      HUNGER_RISE_PER_MONTH * winterMul +
-      Math.random() * HUNGER_RISE_JITTER * winterMul
+      HUNGER_RISE_PER_MONTH * winterMul * traitHungerMul +
+      Math.random() * HUNGER_RISE_JITTER * winterMul * traitHungerMul
   );
+
+  // Phase 9: Faith decays slowly; Zealots resist that decay (50% slower).
+  // This is what gives Zealots their "always above PRAYING threshold" feel
+  // — they tend to enter PRAYING (not ROGUE) when hunger maxes out.
+  const faithDecay =
+    citizen.trait === "Zealot" ? ZEALOT_FAITH_DECAY : NORMAL_FAITH_DECAY;
+  citizen.faith = Math.max(0, citizen.faith - faithDecay);
 
   // --- 4. CRISIS BRANCH: hunger maxed out → independent choice -------------
   if (citizen.hunger >= HUNGER_CRISIS_THRESHOLD) {
@@ -551,11 +664,12 @@ export function updateCitizenMovement(
   if (citizen.state === "DEAD" || citizen.state === "PRAYING" || citizen.state === "SLEEPING") return;
   if (citizen.path.length === 0 || citizen.pathIndex >= citizen.path.length) return;
 
-  // SEEK_FOOD/ROGUE/REBEL keep their named state; otherwise mark MOVING for HUD
+  // SEEK_FOOD/ROGUE/REBEL/FLEEING keep their named state; otherwise mark MOVING for HUD
   if (
     citizen.state !== "SEEK_FOOD" &&
     citizen.state !== "ROGUE" &&
-    citizen.state !== "REBEL"
+    citizen.state !== "REBEL" &&
+    citizen.state !== "FLEEING"
   ) {
     citizen.state = "MOVING";
   }

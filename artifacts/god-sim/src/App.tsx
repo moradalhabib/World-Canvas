@@ -375,6 +375,55 @@ export default function App() {
               </span>
             </div>
             <div className="monologue-text">"{buildMonologue(monologue.citizen)}"</div>
+            {/* Phase 9: Trait + Skill Level + grudge readout. */}
+            {(() => {
+              const c = monologue.citizen;
+              const showSkill =
+                !!c.skills &&
+                c.profession &&
+                c.profession !== "None" &&
+                (c.profession === "Farmer" ||
+                  c.profession === "Miner" ||
+                  c.profession === "Guard");
+              if (!c.trait && !showSkill) return null;
+              return (
+                <div className="monologue-meta">
+                  {c.trait && <span className="monologue-trait">{c.trait}</span>}
+                  {showSkill && (
+                    <span className="monologue-skill">
+                      {c.profession} Lv {c.skills!.level}
+                      <span className="monologue-xp">
+                        {" "}
+                        ({c.skills!.xp}/100 XP)
+                      </span>
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
+            {(() => {
+              const c = monologue.citizen;
+              if (!c.memory) return null;
+              const grudgeIds = Object.keys(c.memory).filter(
+                (id) => (c.memory![id] ?? 0) < 0
+              );
+              if (grudgeIds.length === 0) return null;
+              const all = engineRef.current?.getState().citizens ?? [];
+              const names = grudgeIds.slice(0, 2).map((id) => {
+                const other = all.find((x) => x.id === id);
+                return other ? other.name : id;
+              });
+              const more =
+                grudgeIds.length > names.length
+                  ? ` +${grudgeIds.length - names.length}`
+                  : "";
+              return (
+                <div className="monologue-grudge">
+                  Despises: {names.join(", ")}
+                  {more}
+                </div>
+              );
+            })()}
             <div className="monologue-hint">tap anywhere to dismiss</div>
           </div>
         </div>

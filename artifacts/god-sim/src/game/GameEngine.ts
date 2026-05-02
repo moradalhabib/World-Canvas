@@ -22,7 +22,9 @@ import {
   updateCitizenMovement,
   processNightSleep,
   processDayWake,
+  recordCombatWitnesses,
 } from "./npc";
+import { findPath } from "./pathfinding";
 import { tickYear as tickRoyalYear, getLifeStage, notifyDeath, addChronicle } from "./royalty";
 import type { Citizen } from "./types";
 
@@ -1320,6 +1322,21 @@ export class GameEngine {
   }
 
   private startCombat(a: Citizen, b: Citizen) {
+    // Phase 9: Coward Guards (or any Coward) may break and flee at the
+    // moment of engagement — 30% chance per spec. Cowards still record
+    // a grudge against the would-be attacker.
+    for (const [self, opp] of [[a, b], [b, a]] as const) {
+      if (self.trait === "Coward" && Math.random() < 0.3) {
+        this.makeFlee(self, opp);
+        addChronicle(
+          this.state,
+          `${self.name} loses nerve and flees from ${opp.name}.`
+        );
+        // The fleeing party still witnesses the assault, and bystanders too.
+        recordCombatWitnesses(opp, self, this.state.citizens);
+        return;
+      }
+    }
     a.state = "COMBAT";
     b.state = "COMBAT";
     a.combatTimer = COMBAT_DURATION_MS;
@@ -1327,6 +1344,38 @@ export class GameEngine {
     a.combatOpponentId = b.id;
     b.combatOpponentId = a.id;
     addChronicle(this.state, `${a.name} (rebel) clashes with ${b.name} (royalist)!`);
+    // Phase 9: combatants + nearby witnesses (radius 5) all log a grudge.
+    recordCombatWitnesses(a, b, this.state.citizens);
+  }
+
+  /**
+   * Phase 9: Push a Coward away from their attacker. We pick a target tile
+   * 6 tiles in the opposite direction, clamped to the grid, and use the
+   * existing pathfinder. If no path is reachable, the NPC just stops in
+   * place — better than locking them into combat they wanted to avoid.
+   */
+  private makeFlee(self: Citizen, opp: Citizen) {
+    const grid = this.state.grid;
+    const dr = self.row - opp.row;
+    const dc = self.col - opp.col;
+    const stepR = dr === 0 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(dr);
+    const stepC = dc === 0 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(dc);
+    const targetRow = Math.max(0, Math.min(grid.rows - 1, self.row + stepR * 6));
+    const targetCol = Math.max(0, Math.min(grid.cols - 1, self.col + stepC * 6));
+    const path = findPath(grid, self.row, self.col, targetRow, targetCol);
+    self.state = "FLEEING";
+    if (path && path.length > 0) {
+      self.path = path;
+      self.pathIndex = 0;
+      self.progress = 0;
+      self.targetTile = { row: targetRow, col: targetCol };
+    } else {
+      self.path = [];
+      self.pathIndex = 0;
+      self.progress = 0;
+    }
+    self.combatTimer = undefined;
+    self.combatOpponentId = undefined;
   }
 
   private resolveCombat(a: Citizen, b: Citizen | undefined) {

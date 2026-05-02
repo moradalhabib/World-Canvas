@@ -244,7 +244,19 @@ export type CitizenState =
   | "MINISTERING"
   | "SLEEPING"
   | "REBEL"
-  | "COMBAT";
+  | "COMBAT"
+  /** Phase 9: Coward Guard breaks combat and pathfinds away. */
+  | "FLEEING";
+
+/** Phase 9: Permanent behavioral trait assigned at spawn. */
+export type CitizenTrait = "Zealot" | "Greedy" | "Coward" | "Diligent";
+export const ALL_TRAITS: CitizenTrait[] = ["Zealot", "Greedy", "Coward", "Diligent"];
+
+/** Phase 9: RPG-style skill progression for the NPC's profession. */
+export interface CitizenSkills {
+  level: number;
+  xp: number;
+}
 
 /** Phase 4: Profession assigned to every adult NPC. */
 export type Profession = "Farmer" | "Miner" | "Guard" | "None";
@@ -330,6 +342,18 @@ export interface Citizen {
   combatTimer?: number;
   /** id of the opposing combatant currently locked with this NPC. */
   combatOpponentId?: string;
+
+  /* -- Phase 9: Psychology & Mastery Engine -- */
+  /** Permanent behavioral trait, picked once at spawn. */
+  trait?: CitizenTrait;
+  /** RPG-style mastery for the assigned profession (level/xp). */
+  skills?: CitizenSkills;
+  /**
+   * Episodic memory graph: other-citizen id → opinion score.
+   * Negative scores represent grudges (default −100 for witnessed attacks).
+   * Stored as a plain object so per-frame lookups are O(1).
+   */
+  memory?: Record<string, number>;
 }
 
 /* ── Phase 3B: Chronicle entries ── */
