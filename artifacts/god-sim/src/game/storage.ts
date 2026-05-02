@@ -1,15 +1,18 @@
 import type {
   Building,
+  Citizen,
   CivilizationState,
   GameState,
   Tile,
   TileType,
 } from "./types";
 import { createDefaultCivilization } from "./civilization";
+import { spawnInitialCitizens } from "./npc";
 
 const SAVE_KEY = "god_sim_state";
-/** v1: terrain only. v2: + buildings + civilization. */
-const CURRENT_VERSION = 2;
+/** v1: terrain only. v2: + buildings + civilization. v3: + citizens. */
+const CURRENT_VERSION = 3;
+const INITIAL_CITIZEN_COUNT = 3;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;
 const TILE_SIZE = 64;
@@ -65,6 +68,7 @@ export function createDefaultState(): GameState {
     tiles: generateTerrain(GRID_COLS, GRID_ROWS),
   };
   const civilization = createDefaultCivilization(grid);
+  const citizens = spawnInitialCitizens(grid, civilization.founded, INITIAL_CITIZEN_COUNT);
   return {
     version: CURRENT_VERSION,
     camera: { x: 0, y: 0, zoom: 1 },
@@ -78,6 +82,7 @@ export function createDefaultState(): GameState {
     grid,
     buildings: [],
     civilization,
+    citizens,
   };
 }
 
@@ -130,6 +135,7 @@ interface SerializedState {
   tilesData: string;
   buildings: Building[];
   civilization: CivilizationState;
+  citizens?: Citizen[];
 }
 
 export function saveState(state: GameState): void {
@@ -147,6 +153,7 @@ export function saveState(state: GameState): void {
       tilesData,
       buildings: state.buildings,
       civilization: state.civilization,
+      citizens: state.citizens,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(serialized));
   } catch (e) {
@@ -159,15 +166,31 @@ export function loadState(): GameState | null {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const s: SerializedState = JSON.parse(raw);
-    if (s.version !== CURRENT_VERSION) return null;
+
+    // v3 is current. We migrate from v2 (no citizens) by spawning fresh
+    // citizens at the existing town center. Older versions are discarded.
+    if (s.version !== CURRENT_VERSION && s.version !== 2) return null;
+
     const tiles = decompressTiles(s.tilesData, s.gridMeta.rows, s.gridMeta.cols);
+    const grid = { ...s.gridMeta, tiles };
+    const civilization = s.civilization;
+
+    let citizens: Citizen[];
+    if (s.version === CURRENT_VERSION && Array.isArray(s.citizens)) {
+      citizens = s.citizens;
+    } else {
+      // v2 → v3 migration: spawn fresh citizens around the existing town.
+      citizens = spawnInitialCitizens(grid, civilization.founded, INITIAL_CITIZEN_COUNT);
+    }
+
     return {
-      version: s.version,
+      version: CURRENT_VERSION,
       camera: s.camera,
       time: s.time,
-      grid: { ...s.gridMeta, tiles },
+      grid,
       buildings: s.buildings ?? [],
-      civilization: s.civilization,
+      civilization,
+      citizens,
     };
   } catch (e) {
     console.warn("Failed to load state:", e);

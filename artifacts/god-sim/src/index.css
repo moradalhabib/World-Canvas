@@ -105,6 +105,19 @@ body {
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.18);
   min-width: 52px;
+  transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+
+.resource-alert {
+  background: rgba(255, 110, 30, 0.28);
+  box-shadow: 0 0 0 1px rgba(255, 140, 50, 0.55), 0 0 12px rgba(255, 120, 30, 0.35);
+}
+
+.resource-alert-suffix {
+  margin-left: 4px;
+  color: #ffd9a8;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .resource-icon {

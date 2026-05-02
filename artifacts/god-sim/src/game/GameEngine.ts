@@ -16,6 +16,11 @@ import { getBuildingDef } from "./buildings";
 import { tickCivilizationMonth } from "./civilization";
 import { DesirabilityMap } from "./desirability";
 import { planAndBuild, tryUpgradeHouses } from "./buildAI";
+import {
+  getCitizenVisualPos,
+  tickCitizenMonth,
+  updateCitizenMovement,
+} from "./npc";
 
 const MAX_ZOOM = 4.0;
 const SAVE_INTERVAL_MS = 10_000;
@@ -145,6 +150,11 @@ export class GameEngine {
     );
     if (newBuilding) {
       this.state.buildings.push(newBuilding);
+    }
+
+    // Phase 3: tick each citizen's brain — rises hunger, plans SEEK_FOOD path.
+    for (const c of this.state.citizens) {
+      tickCitizenMonth(c, this.state.grid, this.state.buildings);
     }
   }
 
@@ -368,6 +378,78 @@ export class GameEngine {
     }
   }
 
+  /**
+   * Phase 3: Draw all citizens within the visible tile bounds.
+   * Each citizen renders as a small filled circle (hue-shifted per-NPC) with
+   * a white border for visibility against any biome. Hungry citizens get an
+   * orange "alert" ring and a yellow line to their target tile.
+   */
+  private renderCitizens(
+    startRow: number,
+    endRow: number,
+    startCol: number,
+    endCol: number
+  ) {
+    const ctx = this.ctx;
+    const ts = this.state.grid.tileSize;
+    const cam = this.state.camera;
+    if (this.state.citizens.length === 0) return;
+
+    const radius = ts * 0.18;
+    const borderWidth = Math.max(1, ts * 0.04);
+
+    for (const c of this.state.citizens) {
+      const pos = getCitizenVisualPos(c);
+      // Cull off-screen (with 1-tile margin so we don't pop in/out at edges)
+      if (pos.row < startRow - 1 || pos.row > endRow + 1) continue;
+      if (pos.col < startCol - 1 || pos.col > endCol + 1) continue;
+
+      const cx = pos.col * ts + ts * 0.5;
+      const cy = pos.row * ts + ts * 0.5;
+
+      // Soft drop shadow on the ground beneath the citizen
+      ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + radius * 0.7, radius * 0.9, radius * 0.35, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Hungry-target line (yellow dashed) — only when zoomed in enough
+      if (c.state === "SEEK_FOOD" && c.targetTile && cam.zoom > 0.6) {
+        const tx = c.targetTile.col * ts + ts * 0.5;
+        const ty = c.targetTile.row * ts + ts * 0.5;
+        ctx.strokeStyle = "rgba(255, 220, 80, 0.55)";
+        ctx.lineWidth = Math.max(1, 1.5 / cam.zoom);
+        ctx.setLineDash([ts * 0.12, ts * 0.08]);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(tx, ty);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Body — saturated, bright, hue-rotated
+      const fill = `hsl(${c.hue}, 75%, 55%)`;
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // White border for contrast against any biome
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = borderWidth;
+      ctx.stroke();
+
+      // SEEK_FOOD alert ring — pulsing-ish orange outer halo
+      if (c.state === "SEEK_FOOD") {
+        ctx.strokeStyle = "rgba(255, 130, 30, 0.85)";
+        ctx.lineWidth = borderWidth * 0.9;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius * 1.55, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+  }
+
   private buildVignette() {
     const W = this.viewW;
     const H = this.viewH;
@@ -577,6 +659,7 @@ export class GameEngine {
     this.lastFrameTime = now;
 
     this.tickTime(dt);
+    this.tickCitizenMovement(dt);
     this.render();
 
     if (now - this.lastSaveTime > SAVE_INTERVAL_MS) {
@@ -586,6 +669,20 @@ export class GameEngine {
 
     this.rafId = requestAnimationFrame(this.loop);
   };
+
+  /**
+   * Per-frame: smoothly interpolate every citizen along their current path.
+   * Movement speed scales with timeScale (frozen at 0×). Arrival logic
+   * (e.g. eating at a Bakery) lives inside updateCitizenMovement.
+   */
+  private tickCitizenMovement(dtMs: number) {
+    const ts = this.state.time.timeScale;
+    if (ts === 0) return;
+    const buildings = this.state.buildings;
+    for (const c of this.state.citizens) {
+      updateCitizenMovement(c, dtMs, ts, buildings);
+    }
+  }
 
   private tickTime(dtMs: number) {
     const ts = this.state.time.timeScale;
@@ -721,6 +818,9 @@ export class GameEngine {
 
     // Pass 5: buildings (autonomous AI placements)
     this.renderBuildings(startRow, endRow, startCol, endCol);
+
+    // Pass 5.5: citizens (NPCs walking the world)
+    this.renderCitizens(startRow, endRow, startCol, endCol);
 
     ctx.restore();
 

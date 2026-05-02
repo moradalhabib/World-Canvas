@@ -21,6 +21,8 @@ export default function App() {
   const [gameYear, setGameYear] = useState(1);
   const [civ, setCiv] = useState<CivilizationState | null>(null);
   const [buildingCount, setBuildingCount] = useState(0);
+  const [citizenCount, setCitizenCount] = useState(0);
+  const [hungryCount, setHungryCount] = useState(0);
 
   const onTimeUpdate = useCallback((state: GameState) => {
     setGameMonth(state.time.gameMonth);
@@ -44,6 +46,8 @@ export default function App() {
       monthlyTaxHistory: [...c.monthlyTaxHistory],
     });
     setBuildingCount(state.buildings.length);
+    setCitizenCount(state.citizens.length);
+    setHungryCount(state.citizens.filter((cz) => cz.state === "SEEK_FOOD").length);
   }, []);
 
   useEffect(() => {
@@ -56,6 +60,8 @@ export default function App() {
     setTimeScaleState(s.time.timeScale);
     setCiv({ ...s.civilization });
     setBuildingCount(s.buildings.length);
+    setCitizenCount(s.citizens.length);
+    setHungryCount(s.citizens.filter((cz) => cz.state === "SEEK_FOOD").length);
     return () => {
       engine.destroy();
       engineRef.current = null;
@@ -108,6 +114,23 @@ export default function App() {
             <div className="resource" title="Buildings">
               <span className="resource-icon" style={{ color: "#a8b3c4" }}>⌂</span>
               <span className="resource-val">{buildingCount}</span>
+            </div>
+            <div
+              className={`resource ${hungryCount > 0 ? "resource-alert" : ""}`}
+              title={hungryCount > 0 ? `${hungryCount} citizen(s) seeking food` : "Citizens (NPCs)"}
+            >
+              <span
+                className="resource-icon"
+                style={{ color: hungryCount > 0 ? "#ff8c2a" : "#c4d4ff" }}
+              >
+                ☻
+              </span>
+              <span className="resource-val">
+                {citizenCount}
+                {hungryCount > 0 && (
+                  <span className="resource-alert-suffix"> ⚠{hungryCount}</span>
+                )}
+              </span>
             </div>
           </div>
         )}

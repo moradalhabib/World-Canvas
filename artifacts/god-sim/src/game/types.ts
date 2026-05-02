@@ -40,6 +40,7 @@ export interface GameState {
   grid: Grid;
   buildings: Building[];
   civilization: CivilizationState;
+  citizens: Citizen[];
 }
 
 export const TILE_COLORS: Record<TileType, string> = {
@@ -206,4 +207,44 @@ export interface CivilizationState {
   founded: { row: number; col: number };
   /** Monthly cumulative tax income for HUD trend (last 12 months). */
   monthlyTaxHistory: number[];
+}
+
+/* ========================================================================== */
+/*  Phase 3: Citizens (NPCs) — utility AI + pathfinding                       */
+/* ========================================================================== */
+
+export type CitizenState = "IDLE" | "MOVING" | "SEEK_FOOD" | "WORKING";
+
+export interface PathStep {
+  row: number;
+  col: number;
+}
+
+export interface CitizenNeeds {
+  hunger: number;
+  safety: number;
+  social: number;
+  vanity: number;
+  faith: number;
+}
+
+export interface Citizen {
+  id: string;
+  /** Logical "from" tile — the tile the citizen most recently occupied. */
+  row: number;
+  col: number;
+  /** Lerp factor 0..1 from current tile toward path[pathIndex]. */
+  progress: number;
+  state: CitizenState;
+  /** Remaining tiles to walk through (excluding current). */
+  path: PathStep[];
+  pathIndex: number;
+  /** Final destination — for arrival logic. */
+  targetTile?: { row: number; col: number };
+  /** ID of building being targeted (so we can still look it up after arriving). */
+  targetBuildingId?: string;
+  /** Personal needs (parallel to civ-level needs). */
+  needs: CitizenNeeds;
+  /** Hue rotation for visual variation (0..359). */
+  hue: number;
 }
