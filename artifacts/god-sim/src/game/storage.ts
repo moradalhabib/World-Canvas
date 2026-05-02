@@ -14,8 +14,9 @@ import { anointInitialKing, loadChronicle } from "./royalty";
 const SAVE_KEY = "god_sim_state";
 /** v1: terrain only. v2: + buildings + civilization. v3: + citizens.
  *  v4: + royal succession (nobleDissent, chronicle, lineage fields).
- *  v5: + Phase 6 lifecycle (safety, vanity, day/night, REBEL/SLEEPING). */
-const CURRENT_VERSION = 5;
+ *  v5: + Phase 6 lifecycle (safety, vanity, day/night, REBEL/SLEEPING).
+ *  v6: + Phase 5 Divine Powers (crater tile, building.status, winterActive). */
+const CURRENT_VERSION = 6;
 const INITIAL_CITIZEN_COUNT = 6;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;
@@ -28,6 +29,7 @@ const TILE_TYPE_MAP: TileType[] = [
   "mountain",
   "desert",
   "snow",
+  "crater",
 ];
 
 function generateTerrain(cols: number, rows: number): Tile[][] {
@@ -92,6 +94,7 @@ export function createDefaultState(): GameState {
     lastRoyalYearTicked: 1,
     dayNight: "day",
     lastDayNightFlipMonth: 1,
+    winterActive: false,
   };
   // Phase 3B: anoint the founding King + Queen and write the first chronicle.
   anointInitialKing(state);
@@ -153,6 +156,7 @@ interface SerializedState {
   lastRoyalYearTicked?: number;
   dayNight?: GameState["dayNight"];
   lastDayNightFlipMonth?: number;
+  winterActive?: boolean;
 }
 
 export function saveState(state: GameState): void {
@@ -176,6 +180,7 @@ export function saveState(state: GameState): void {
       lastRoyalYearTicked: state.lastRoyalYearTicked,
       dayNight: state.dayNight,
       lastDayNightFlipMonth: state.lastDayNightFlipMonth,
+      winterActive: state.winterActive,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(serialized));
   } catch (e) {
@@ -189,13 +194,15 @@ export function loadState(): GameState | null {
     if (!raw) return null;
     const s: SerializedState = JSON.parse(raw);
 
-    // v5 is current. We migrate from v2 (no citizens), v3 (no royalty), and
-    // v4 (no Phase-6 lifecycle/day-night). Older versions are discarded.
+    // v6 is current. We migrate from v2 (no citizens), v3 (no royalty),
+    // v4 (no Phase-6 lifecycle/day-night), and v5 (no Phase-5 winter/rubble/crater).
+    // Older versions are discarded.
     if (
       s.version !== CURRENT_VERSION &&
       s.version !== 2 &&
       s.version !== 3 &&
-      s.version !== 4
+      s.version !== 4 &&
+      s.version !== 5
     ) {
       return null;
     }
@@ -206,7 +213,7 @@ export function loadState(): GameState | null {
 
     let citizens: Citizen[];
     if (
-      (s.version === CURRENT_VERSION || s.version === 4 || s.version === 3) &&
+      (s.version === CURRENT_VERSION || s.version === 5 || s.version === 4 || s.version === 3) &&
       Array.isArray(s.citizens)
     ) {
       // Backfill any fields added in mid-version code changes (e.g. faith,
@@ -217,12 +224,18 @@ export function loadState(): GameState | null {
       citizens = spawnInitialCitizens(grid, civilization.founded, INITIAL_CITIZEN_COUNT);
     }
 
+    // Phase 5: backfill missing per-Building.status so older saves render correctly.
+    const buildings = (s.buildings ?? []).map((b) => ({
+      ...b,
+      status: b.status ?? "intact",
+    }));
+
     const state: GameState = {
       version: CURRENT_VERSION,
       camera: s.camera,
       time: s.time,
       grid,
-      buildings: s.buildings ?? [],
+      buildings,
       civilization,
       citizens,
       nobleDissent: s.nobleDissent ?? "LOW",
@@ -231,6 +244,7 @@ export function loadState(): GameState | null {
       dayNight: s.dayNight ?? "day",
       lastDayNightFlipMonth:
         s.lastDayNightFlipMonth ?? s.time.gameYear * 12 + s.time.gameMonth,
+      winterActive: s.winterActive ?? false,
     };
 
     // v3 → v4: no monarch existed. Anoint the existing population.

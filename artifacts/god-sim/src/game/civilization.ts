@@ -77,7 +77,9 @@ export function createDefaultCivilization(grid: Grid): CivilizationState {
  */
 export function tickCivilizationMonth(
   civ: CivilizationState,
-  buildings: Building[]
+  buildings: Building[],
+  /** Phase 5: when true, all wheat-producing buildings yield zero. */
+  winterActive: boolean = false
 ): { taxes: number; housingCapacity: number } {
   const res = civ.resources;
   let totalHousing = 0;
@@ -86,6 +88,10 @@ export function tickCivilizationMonth(
 
   // Pass A: production / consumption / taxes
   for (const b of buildings) {
+    // Phase 5: rubble produces nothing, consumes nothing, pays no tax — but
+    // its tile is still occupied by the wreck.
+    if (b.status === "rubble") continue;
+
     const def = getBuildingDef(b.typeId);
 
     // Check if all consumed resources are available
@@ -102,9 +108,10 @@ export function tickCivilizationMonth(
       res[k] = Math.max(0, (res[k] ?? 0) - amount);
     }
 
-    // Add production (scaled by efficiency)
+    // Add production (scaled by efficiency). Winter zeroes wheat output.
     for (const [k, amount] of Object.entries(def.produces) as [Resource, number][]) {
-      res[k] = (res[k] ?? 0) + amount * efficiency;
+      const winterMul = winterActive && k === "wheat" ? 0 : 1;
+      res[k] = (res[k] ?? 0) + amount * efficiency * winterMul;
     }
 
     // Taxes (scaled by efficiency)

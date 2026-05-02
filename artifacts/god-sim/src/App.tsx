@@ -1,8 +1,51 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { GameEngine } from "./game/GameEngine";
-import type { CitizenTapInfo } from "./game/GameEngine";
+import type { CitizenTapInfo, DivinePower, DivineBrush } from "./game/GameEngine";
 import type { ChronicleEntry, Citizen, CivilizationState, GameState } from "./game/types";
 import { ALL_NEEDS, NEED_COLORS, NEED_LABELS } from "./game/types";
+
+/**
+ * Phase 5: Divine Powers toolbar.
+ * Each top-level icon maps to a category; clicking it expands a sub-menu of
+ * concrete brushes. The "chronomancer" entries (Freeze, Winter) are toggles
+ * that fire once and don't put the canvas into a brush mode.
+ */
+type ToolbarCategory = "architect" | "judge" | "wrath" | "chronomancer";
+interface BrushOpt { id: DivineBrush; label: string; glyph: string; }
+const BRUSH_GROUPS: Record<ToolbarCategory, BrushOpt[]> = {
+  architect: [
+    { id: "paint_grass",    label: "Grass",    glyph: "🌿" },
+    { id: "paint_water",    label: "Water",    glyph: "💧" },
+    { id: "paint_forest",   label: "Forest",   glyph: "🌲" },
+    { id: "paint_mountain", label: "Mountain", glyph: "⛰" },
+  ],
+  judge: [
+    { id: "smite", label: "Smite", glyph: "⚡" },
+    { id: "bless", label: "Bless", glyph: "✦" },
+  ],
+  wrath: [
+    { id: "meteor", label: "Meteor", glyph: "☄" },
+  ],
+  chronomancer: [],
+};
+const CAT_LABELS: Record<ToolbarCategory, string> = {
+  architect: "Architect",
+  judge: "Judge",
+  wrath: "Wrath",
+  chronomancer: "Time",
+};
+const CAT_GLYPHS: Record<ToolbarCategory, string> = {
+  architect: "⚒",
+  judge: "⚖",
+  wrath: "☄",
+  chronomancer: "⏳",
+};
+const CAT_TO_POWER: Record<ToolbarCategory, DivinePower> = {
+  architect: "architect",
+  judge: "judge",
+  wrath: "wrath",
+  chronomancer: "none",
+};
 
 /**
  * Phase 4: Generate the inner monologue line for a tapped NPC. The choice is

@@ -1,0 +1,45 @@
+Phase 10: Ultimate NPC Visual Overhaul & Realistic Aesthetics
+Acknowledge this prompt. We are replacing the entire graphics engine. We are keeping all previous deep logic (Lineage, Factions, Traits, Skills, Heresy, Day/Night) intact but upgrading their visual implementation.
+
+1. New Visual Engine: Textures & Lighting (Realistic Upgrade):
+
+Stop drawing flat colors. Generate procedural textures or draw from optimized seamless pattern canvases (Perlin noise or simple tiling) for: Grass (rich texture), Water (subtle waves pattern), Rock (granite texture), Snow (smooth white noise texture).
+
+Isometric/Voxel Style Buildings: Update all building render functions to draw with simple isometric perspective, applying separate texture patterns for walls (wood/stone grain) and roofs (shingle/thatch pattern).
+
+Lighting & Dynamic Shadows: Implement the previously added Day/Night cycle but make it detailed. During day, add dynamic "soft" shadows cast from buildings and mountains. During night, apply a dramatic cool blue lighting filter overlay.
+
+2. Goal: Ultimate Unique NPCs (Visual Diversity):
+
+Create a compositeNPCSprite drawing function to create visual uniqueness per ID. Randomize composite parts at spawn within logical boundaries:
+
+Head: 5 random hair styles + random beard styles. Color is natural (black, brown, blonde) but overrides to Gray/White for Elder NPCs (age logic).
+
+Skin: Randomize within varied skin tone pools for natural visual diversity across the population.
+
+Torso (Tunic): Apply textures (linen, wool). Color pool based on Social Class (Peasant: brown/grey; Middle Class: green/blue; Noble: royal purple/gold pattern; King: deep red/ermine).
+
+Accessory (Profession & Trait Logic):
+
+Farmer: Holds a simple pixel hoe.
+
+Miner: Holds a pickaxe.
+
+Guard: Holds a spear/shield.
+
+Noble/Master Skill: Accessory is a visible gold ring/necklace.
+
+Royal: Retains the gold crown on the head.
+
+3. State & Logic Visualization (Goal 1 Integration):
+
+Traits: A 'Zealot' NPC must always wear a simple cross necklace. A 'Greedy' NPC has a coin pouch texture on their belt. A 'Coward' NPC always spawns with slightly smaller sprite dimensions.
+
+Heresy: Keep the dark aura effect, but make it look like smoky, floating particles.
+
+Instruction: Confirm understanding. Provide the updated JavaScript logic for this total visual overhaul. Optimize performance by using a separate static background canvas layer for static terrain to keep the mobile frame rate high.
+
+The Reality Check
+Let the Agent execute this massive change. It might require significant modification to how the game draws elements.
+
+Once it compiles and your browser refreshes, the screen should look completely different.

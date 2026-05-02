@@ -429,9 +429,13 @@ export function tickCitizenMonth(
   }
 
   // --- 3. Living, non-crisis: hunger ticks up ------------------------------
+  // Phase 5: Winter doubles the rate at which everyone gets hungry.
+  const winterMul = state?.winterActive ? 2 : 1;
   citizen.hunger = Math.min(
     100,
-    citizen.hunger + HUNGER_RISE_PER_MONTH + Math.random() * HUNGER_RISE_JITTER
+    citizen.hunger +
+      HUNGER_RISE_PER_MONTH * winterMul +
+      Math.random() * HUNGER_RISE_JITTER * winterMul
   );
 
   // --- 4. CRISIS BRANCH: hunger maxed out → independent choice -------------

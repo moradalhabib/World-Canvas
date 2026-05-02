@@ -10,7 +10,9 @@ export type TileType =
   | "forest"
   | "mountain"
   | "desert"
-  | "snow";
+  | "snow"
+  /** Phase 5: Wrath crater — burnt scar left by a meteor strike. */
+  | "crater";
 
 export interface Tile {
   type: TileType;
@@ -51,6 +53,8 @@ export interface GameState {
   dayNight: "day" | "night";
   /** Phase 6: Last absolute month (year*12+month) at which the day/night phase flipped. */
   lastDayNightFlipMonth: number;
+  /** Phase 5: Chronomancer Winter mode — halts crops and doubles hunger. */
+  winterActive: boolean;
 }
 
 export const TILE_COLORS: Record<TileType, string> = {
@@ -60,6 +64,7 @@ export const TILE_COLORS: Record<TileType, string> = {
   mountain: "#718096",
   desert: "#d69e2e",
   snow: "#e2e8f0",
+  crater: "#2a1410",
 };
 
 export const TILE_BORDER_COLORS: Record<TileType, string> = {
@@ -69,6 +74,7 @@ export const TILE_BORDER_COLORS: Record<TileType, string> = {
   mountain: "#4a5568",
   desert: "#b7791f",
   snow: "#cbd5e0",
+  crater: "#1a0a08",
 };
 
 export const TILE_SPECKLE_COLORS: Record<TileType, [string, string]> = {
@@ -78,6 +84,7 @@ export const TILE_SPECKLE_COLORS: Record<TileType, [string, string]> = {
   mountain: ["#8b95a3", "#5a6472"],
   desert: ["#e8b85a", "#b8801a"],
   snow: ["#ffffff", "#b5c2d1"],
+  crater: ["#5c2a1a", "#1a0606"],
 };
 
 export const SPECKLE_DENSITY: Record<TileType, number> = {
@@ -87,6 +94,7 @@ export const SPECKLE_DENSITY: Record<TileType, number> = {
   mountain: 50,
   desert: 40,
   snow: 25,
+  crater: 90,
 };
 
 export const TRANSITION_COLORS: Partial<Record<string, string>> = {
@@ -173,6 +181,8 @@ export interface Building {
   builtMonth: number;
   /** Cached desirability score at last evaluation, for HUD/debug. */
   lastDesirability: number;
+  /** Phase 5: "rubble" buildings still occupy their tile but produce nothing. */
+  status?: "intact" | "rubble";
 }
 
 /* ── Utility AI: needs ── */
