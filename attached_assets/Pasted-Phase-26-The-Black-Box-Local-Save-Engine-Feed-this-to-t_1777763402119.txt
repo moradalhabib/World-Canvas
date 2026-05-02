@@ -1,0 +1,44 @@
+Phase 26: The "Black Box" Local Save Engine
+Feed this to the Replit Agent immediately to pivot the technical infrastructure.
+
+[COPY EVERYTHING BELOW THIS LINE FOR REPLIT]
+
+Phase 26: Local-First State Persistence (Production Build)
+Acknowledge this prompt. We are moving to a Local-First architecture to zero out server-side database costs for the Apple App Store deployment.
+
+1. The Serialization Manager:
+
+Create a GameState interface that captures: currentEra, totalResources, npcCount, buildingMap (positions and types), and activeLaborTasks.
+
+Implement a saveToLocal() function that converts this entire object into a compressed JSON string.
+
+2. Storage Logic:
+
+Use window.localStorage to store the string under the key humanity_progress_save.
+
+Prepare a hook for Capacitor Preferences API so we can easily swap to native iOS storage during the final app wrap.
+
+3. The "Hydration" System:
+
+On window.onload, check for the existence of humanity_progress_save.
+
+If present, parse the JSON and "hydrate" the game engine. All NPCs and buildings must reappear in their exact positions and states.
+
+If not present, trigger the "Stone Age" initialization sequence.
+
+4. Performance Auto-Save:
+
+Implement a "Dirty State" flag. Only trigger a save write if a change has occurred (e.g., a building is completed or a resource is gathered).
+
+Limit auto-saves to once every 30 seconds to prevent storage-write overhead.
+
+Instruction: Implement the SaveManager class and the hydration logic now. Confirm once the game successfully survives a browser refresh without losing progress.
+
+Monetization Synergy: The Premium Model
+Since you are saving everything locally, the Premium (Paid Upfront) monetization model is your cleanest fit.
+
+The Transaction: The user pays $2.99–$4.99 once on the App Store.
+
+The Profit: You receive the payout from Apple, and your only recurring cost is the $20/month Replit subscription.
+
+The Scalability: Whether you have 10 users or 10,000, your monthly bill stays the same. Every new download becomes pure profit after you cover your initial asset investment.

@@ -153,7 +153,15 @@ export type DivineBrush =
   | "meteor";
 
 const MAX_ZOOM = 4.0;
-const SAVE_INTERVAL_MS = 10_000;
+/**
+ * Phase 26 — Local-first "Black Box" autosave throttle.
+ * Bumped from 10s → 30s now that the save is gated by a dirty flag —
+ * a paused world (timeScale=0, idle on the title menu) writes nothing,
+ * and an active world writes at most twice a minute. destroy() and the
+ * window `beforeunload` listener still flush an unconditional final
+ * snapshot so a hard refresh never loses progress.
+ */
+const SAVE_INTERVAL_MS = 30_000;
 const MONTHS_PER_REAL_MS_AT_1X = 1 / 60_000;
 
 export interface GameCallbacks {
@@ -186,6 +194,19 @@ export class GameEngine {
   private rafId = 0;
   private lastFrameTime = 0;
   private lastSaveTime = 0;
+  /**
+   * Phase 26 — dirty flag for the throttled autosave. Starts FALSE so
+   * an idle/paused title screen produces zero localStorage writes —
+   * legacy-key → new-key migration is handled write-through inside
+   * loadState() itself, not via this flag. Set true by:
+   *   - the per-frame loop whenever timeScale > 0 (sim mutated state)
+   *   - setEra() (paused-mutation path)
+   *   - toggleWinter() (paused-mutation path)
+   *   - castDivine() (paused-mutation path covering every divine power
+   *     branch: architect/terraform, smite, bless, plague, meteor)
+   * Cleared back to false immediately after a successful save() write.
+   */
+  private dirty = false;
   private accumulatedMonthFrac = 0;
 
   private touch1: Touch | null = null;
@@ -400,8 +421,20 @@ export class GameEngine {
 
     this.bindTouchEvents();
     this.bindMouseEvents();
+    // Phase 26: hard-refresh / tab-close safety net. React's useEffect
+    // cleanup fires destroy() on SPA unmount, but a real browser refresh
+    // (Cmd-R / closing the tab) bypasses that path — beforeunload is the
+    // only hook that fires synchronously in time to flush an unconditional
+    // final snapshot to localStorage before the page tears down.
+    window.addEventListener("beforeunload", this.onBeforeUnload);
     this.start();
   }
+
+  private onBeforeUnload = () => {
+    // Always flush, regardless of dirty flag — a refresh is exactly the
+    // moment we cannot afford to skip a write.
+    this.save();
+  };
 
   /**
    * Run one month of civilization simulation.
@@ -4005,6 +4038,10 @@ export class GameEngine {
       this.state,
       `The ${this.eraDisplayName(oldEra)} fades; the ${this.eraDisplayName(newEra)} dawns. Our settlements transform.`,
     );
+    // Phase 26: era transitions are paused-mutation-safe — flag the
+    // save engine so the next 30s tick (or the destroy/beforeunload
+    // flush) persists the new era + scaffolded buildings.
+    this.dirty = true;
   }
 
   private eraDisplayName(era: import("./types").Era): string {
@@ -4230,9 +4267,23 @@ export class GameEngine {
 
     this.render();
 
-    if (now - this.lastSaveTime > SAVE_INTERVAL_MS) {
+    // Phase 26: any unpaused frame is a frame that just mutated game
+    // state (citizen positions, building production, lifecycle timers,
+    // weather, etc.) — flag the save engine. A paused world (timeScale
+    // === 0) is intentionally NOT marked dirty here, so an idle title
+    // screen produces zero localStorage writes.
+    if (this.state.time.timeScale > 0) {
+      this.dirty = true;
+    }
+
+    // Phase 26: throttled autosave — only writes when something has
+    // actually changed since the last flush. The unconditional final
+    // snapshot still fires from destroy() and the beforeunload listener
+    // so a hard refresh never loses progress.
+    if (this.dirty && now - this.lastSaveTime > SAVE_INTERVAL_MS) {
       this.save();
       this.lastSaveTime = now;
+      this.dirty = false;
     }
 
     this.rafId = requestAnimationFrame(this.loop);
@@ -4875,6 +4926,8 @@ export class GameEngine {
         ? "A divine winter falls upon the land. The crops wither."
         : "The winter lifts. Spring returns to the fields."
     );
+    // Phase 26: paused-mutation-safe — flag the autosave engine.
+    this.dirty = true;
   }
   public isWinter(): boolean { return this.state.winterActive; }
 
@@ -4896,6 +4949,12 @@ export class GameEngine {
     const grid = this.state.grid;
     if (row < 0 || row >= grid.rows || col < 0 || col >= grid.cols) return;
     const ts = grid.tileSize;
+    // Phase 26: every divine power mutates state (terrain, buildings,
+    // citizens, animals, or particles) and most can be invoked while
+    // timeScale === 0 (the player commonly pauses to aim a smite).
+    // Flag the autosave at the entry point so every branch below is
+    // covered without sprinkling markers across each case.
+    this.dirty = true;
 
     if (this.currentPower === "architect") {
       const newType = this.brushToTile(this.currentBrush);
@@ -6114,6 +6173,10 @@ export class GameEngine {
     cancelAnimationFrame(this.rafId);
     this.resizeObserver.disconnect();
     this.save();
+    // Phase 26: tear down the hard-refresh safety net so a remounted
+    // engine (e.g. React StrictMode double-invoke) doesn't leave a
+    // dangling listener bound to a destroyed engine instance.
+    window.removeEventListener("beforeunload", this.onBeforeUnload);
     const el = this.canvas;
     el.removeEventListener("touchstart", this.onTouchStart);
     el.removeEventListener("touchmove", this.onTouchMove);

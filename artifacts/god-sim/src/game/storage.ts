@@ -66,7 +66,95 @@ export function spawnInitialAnimals(grid: Grid, sheepCount: number, wolfCount: n
   return animals;
 }
 
-const SAVE_KEY = "god_sim_state";
+/**
+ * Phase 26 — Local-First "Black Box" save engine.
+ *
+ * Storage key. Renamed from the legacy `god_sim_state` to the
+ * production-branded `humanity_progress_save` for the App Store wrap.
+ * `loadState()` reads the new key first and falls back to the legacy key
+ * for one-shot migration so existing dev/player saves are not lost.
+ * `saveState()` writes only the new key going forward.
+ */
+const SAVE_KEY = "humanity_progress_save";
+/**
+ * Legacy storage key (Phase 1 → Phase 25). Read-only fallback in
+ * `loadState()` — once a v15+ save is written under SAVE_KEY, the legacy
+ * key becomes stale. We do NOT delete the legacy key automatically so
+ * users can roll back to a pre-Phase-26 build if they want.
+ */
+const LEGACY_SAVE_KEY = "god_sim_state";
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Phase 26 — SaveBackend abstraction.
+ *
+ * Thin pluggable interface so the same SaveManager works against either
+ * `window.localStorage` (web build, current default) or the Capacitor
+ * Preferences API (native iOS App Store build).
+ *
+ * The web build registers `localStorageBackend`; the future native build
+ * will swap in a `capacitorPreferencesBackend` (commented stub below)
+ * with zero changes to the call sites.
+ *
+ * The interface is intentionally narrow — getItem / setItem / removeItem
+ * mirror the localStorage subset Capacitor Preferences exposes natively
+ * via `Preferences.get({ key })` / `Preferences.set({ key, value })` /
+ * `Preferences.remove({ key })`. Both are string-only key/value stores,
+ * so the JSON serialization stays the same across both backends.
+ * ───────────────────────────────────────────────────────────────────── */
+
+export interface SaveBackend {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+const localStorageBackend: SaveBackend = {
+  getItem: (k) => {
+    try { return localStorage.getItem(k); } catch { return null; }
+  },
+  setItem: (k, v) => {
+    try { localStorage.setItem(k, v); } catch (e) { console.warn("save: localStorage.setItem failed", e); }
+  },
+  removeItem: (k) => {
+    try { localStorage.removeItem(k); } catch { /* ignore */ }
+  },
+};
+
+/*
+ * Future Capacitor backend (registered when the app is wrapped for iOS).
+ *
+ * IMPORTANT — async caveat: The current `SaveBackend` contract is
+ * synchronous because it mirrors `localStorage` and is consumed from
+ * inside the synchronous `GameEngine` constructor. Capacitor's
+ * `Preferences` API is async-only, so a true native wrap will require
+ * EITHER:
+ *   (a) widening this interface to `Promise<string | null>` returns and
+ *       making `loadState()` + the GameEngine boot path awaitable
+ *       (cascades through the React mount — bigger refactor, deferred
+ *       to Phase 27), OR
+ *   (b) shipping a small native shim that hot-loads all keys into an
+ *       in-memory cache at app boot and write-throughs on setItem so
+ *       the sync facade keeps working unchanged.
+ *
+ * Phase 26 ships the abstraction + key rebrand so the swap site is
+ * centralized in ONE file (storage.ts) instead of scattered across
+ * every saveState/loadState/clearSave call site — but the async
+ * migration itself is real engineering, not a 5-line edit.
+ *
+ * import { Preferences } from "@capacitor/preferences";
+ * const capacitorPreferencesBackend: SaveBackend = {
+ *   getItem: async (k) => (await Preferences.get({ key: k })).value,
+ *   setItem: async (k, v) => { await Preferences.set({ key: k, value: v }); },
+ *   removeItem: async (k) => { await Preferences.remove({ key: k }); },
+ * };
+ */
+
+let activeBackend: SaveBackend = localStorageBackend;
+
+/** Test/debug hook — let the host swap the backend (e.g. for Capacitor wrap). */
+export function setSaveBackend(backend: SaveBackend): void {
+  activeBackend = backend;
+}
 /** v1: terrain only. v2: + buildings + civilization. v3: + citizens.
  *  v4: + royal succession (nobleDissent, chronicle, lineage fields).
  *  v5: + Phase 6 lifecycle (safety, vanity, day/night, REBEL/SLEEPING).
@@ -323,7 +411,7 @@ export function saveState(state: GameState): void {
       lastImmigrationYear: state.lastImmigrationYear,
       currentEra: state.currentEra,
     };
-    localStorage.setItem(SAVE_KEY, JSON.stringify(serialized));
+    activeBackend.setItem(SAVE_KEY, JSON.stringify(serialized));
   } catch (e) {
     console.warn("Failed to save state:", e);
   }
@@ -331,7 +419,20 @@ export function saveState(state: GameState): void {
 
 export function loadState(): GameState | null {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    // Phase 26: read the production key first; fall back to the legacy
+    // `god_sim_state` key one time so existing pre-Phase-26 saves migrate
+    // transparently. When we hit the legacy fallback we ALSO write the
+    // raw payload through to the new key immediately — this way the
+    // engine's dirty flag can stay false on a clean idle boot, and the
+    // legacy entry is only consulted once per realm.
+    let raw = activeBackend.getItem(SAVE_KEY);
+    if (raw == null) {
+      const legacy = activeBackend.getItem(LEGACY_SAVE_KEY);
+      if (legacy != null) {
+        activeBackend.setItem(SAVE_KEY, legacy);
+        raw = legacy;
+      }
+    }
     if (!raw) return null;
     const s: SerializedState = JSON.parse(raw);
 
@@ -529,7 +630,10 @@ export function applyOfflineProgression(state: GameState): void {
 
 export function clearSave(): void {
   try {
-    localStorage.removeItem(SAVE_KEY);
+    activeBackend.removeItem(SAVE_KEY);
+    // Phase 26: also wipe the legacy key so a "new game" can't be
+    // accidentally re-hydrated from the pre-rename fallback.
+    activeBackend.removeItem(LEGACY_SAVE_KEY);
   } catch (e) {
     console.warn("Failed to clear save:", e);
   }
