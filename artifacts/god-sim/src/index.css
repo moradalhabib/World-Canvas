@@ -50,7 +50,39 @@ body {
   touch-action: none;
 }
 
+/* Phase 19: tilt-shift miniature effect — two soft blur bands at the
+   top and bottom 15% of the viewport draw the eye to the centre band
+   where most gameplay happens. Pointer-events: none so map clicks pass
+   through. mask-image fades the blur out toward the centre so there is
+   no harsh seam. */
+.tilt-shift-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 15%;
+  pointer-events: none;
+  z-index: 1;
+  backdrop-filter: blur(2.5px);
+  -webkit-backdrop-filter: blur(2.5px);
+}
+.tilt-shift-band-top {
+  top: 0;
+  mask-image: linear-gradient(to bottom, black 0%, black 40%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 40%, transparent 100%);
+}
+.tilt-shift-band-bottom {
+  bottom: 0;
+  mask-image: linear-gradient(to top, black 0%, black 40%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to top, black 0%, black 40%, transparent 100%);
+}
+
+/* Phase 19 "Townsmen" overhaul: +25% global saturation on the canvas to
+   give grass / terracotta / water the rich, vibrant look of a premium
+   simulation. The CSS `filter` is GPU-accelerated and runs once per
+   composite frame, so it does not affect render-loop FPS. UI panels
+   layer above the canvas in the DOM and are unaffected. */
 .game-canvas {
+  filter: saturate(1.25);
   display: block;
   width: 100%;
   height: 100%;
@@ -60,6 +92,33 @@ body {
 
 .game-canvas:active {
   cursor: grabbing;
+}
+
+/* Phase 19 "Divine Cursor" — context-sensitive reticle that swaps with the
+   active power. Each cursor is an inline SVG data-URI (32x32, hotspot 16,16)
+   so there are zero extra HTTP requests and the reticle picks up the power's
+   colour palette. The selectors target `.game-canvas` based on the
+   `data-active-power` attribute on its parent `.game-root`, so the cursor
+   updates the moment the player selects a power in the toolbar. */
+.game-root[data-active-power="architect"] .game-canvas {
+  cursor:
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><circle cx="16" cy="16" r="11" fill="none" stroke="%2349d17a" stroke-width="2"/><circle cx="16" cy="16" r="2.5" fill="%2349d17a"/><line x1="16" y1="2" x2="16" y2="8" stroke="%2349d17a" stroke-width="2"/><line x1="16" y1="24" x2="16" y2="30" stroke="%2349d17a" stroke-width="2"/><line x1="2" y1="16" x2="8" y2="16" stroke="%2349d17a" stroke-width="2"/><line x1="24" y1="16" x2="30" y2="16" stroke="%2349d17a" stroke-width="2"/></svg>') 16 16,
+    crosshair;
+}
+.game-root[data-active-power="judge"] .game-canvas {
+  cursor:
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><circle cx="16" cy="16" r="12" fill="none" stroke="%23f4cf5b" stroke-width="2"/><circle cx="16" cy="16" r="6" fill="none" stroke="%23f4cf5b" stroke-width="1.2" opacity="0.7"/><circle cx="16" cy="16" r="2" fill="%23ffe89a"/><circle cx="16" cy="4" r="1.5" fill="%23f4cf5b"/><circle cx="16" cy="28" r="1.5" fill="%23f4cf5b"/><circle cx="4" cy="16" r="1.5" fill="%23f4cf5b"/><circle cx="28" cy="16" r="1.5" fill="%23f4cf5b"/></svg>') 16 16,
+    crosshair;
+}
+.game-root[data-active-power="wrath"] .game-canvas {
+  cursor:
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><circle cx="16" cy="16" r="12" fill="none" stroke="%23ff5a3c" stroke-width="2"/><polygon points="18,4 10,17 15,17 13,28 22,14 17,14" fill="%23ffd84a" stroke="%23ff5a3c" stroke-width="1"/><circle cx="16" cy="16" r="1.5" fill="%23ff5a3c"/></svg>') 16 16,
+    crosshair;
+}
+.game-root[data-active-power="architect"] .game-canvas:active,
+.game-root[data-active-power="judge"] .game-canvas:active,
+.game-root[data-active-power="wrath"] .game-canvas:active {
+  cursor: inherit;
 }
 
 /* ── HUD: top (clock + resources) ── */

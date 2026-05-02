@@ -148,10 +148,13 @@ export function tickCivilizationMonth(
   collectiveSatisfaction.hunger = (collectiveSatisfaction.hunger ?? 0) + hungerReduction;
   // Starvation increases hunger. Phase 11 v8: rate cut from *8 to *3 per
   // bread-deficit unit so a brief food shortage doesn't peg civic hunger to
-  // 100 within a few months. The realm now has roughly 3x longer to build
-  // farms/bakeries before the panel turns red.
+  // 100 within a few months. Phase 19 "God-Sim balance": rate cut a further
+  // 60% (3 → 1.2) to give the player a relaxed, creative pace — a brief
+  // bread shortage should be a warning, not a death sentence. With 1.2x
+  // multiplier the realm has ~7x the original (Phase 11 pre-v8) headroom
+  // to construct farms/bakeries before civic hunger crosses 80.
   if (breadEaten < breadDemand) {
-    civ.needs.hunger.value = Math.min(100, civ.needs.hunger.value + (breadDemand - breadEaten) * 3);
+    civ.needs.hunger.value = Math.min(100, civ.needs.hunger.value + (breadDemand - breadEaten) * 1.2);
   }
 
   // Pass C: housing surplus reduces safety

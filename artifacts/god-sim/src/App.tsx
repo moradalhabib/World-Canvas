@@ -268,8 +268,14 @@ export default function App() {
   const monthLabel = MONTH_NAMES[(gameMonth - 1) % 12];
 
   return (
-    <div className="game-root">
+    <div className="game-root" data-active-power={activePower}>
+      {/* Phase 19: canvas wrapped so we can paint a tilt-shift miniature
+          effect (top + bottom 15% blur bands) above it without affecting
+          the rendering pipeline. The canvas itself receives the +25%
+          saturation filter via .game-canvas CSS. */}
       <canvas ref={canvasRef} className="game-canvas" />
+      <div className="tilt-shift-band tilt-shift-band-top" aria-hidden="true" />
+      <div className="tilt-shift-band tilt-shift-band-bottom" aria-hidden="true" />
 
       {/* Top: clock + resources */}
       <div className="hud-top">

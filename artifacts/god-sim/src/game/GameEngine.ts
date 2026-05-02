@@ -1127,13 +1127,9 @@ export class GameEngine {
     // composed via the three-layer queue and never reaches this path.
     if (!(def.category === "service" && b.typeId === "well")) return;
     this.drawBuilding(b, def, x, y, ts);
-    if (cam.zoom > 0.7) {
-      ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
-      ctx.font = `bold ${Math.round(ts * 0.32)}px -apple-system, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(def.glyph, sx, sy);
-    }
+    // Phase 19: center letter-glyph overlay removed per "no text labels for
+    // entities" directive. The well's distinct circular silhouette + roof
+    // color now identifies it without a "W" letter floating on top.
   }
 
   /**
@@ -1698,17 +1694,12 @@ export class GameEngine {
       ctx.fillText(glyph, badgeCx, badgeCy);
     }
 
-    // Center category glyph (the single-letter "F" / "B" / "H" / etc. sign)
-    // is drawn last so it sits on top of the (potentially faded) roof. It
-    // stays at full alpha so the player can always identify the building
-    // type even when the roof is in cutaway mode.
-    if (this.state.camera.zoom > 0.7) {
-      ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
-      ctx.font = `bold ${Math.round(ts * 0.32)}px -apple-system, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(def.glyph, x + ts * 0.5, y + ts * 0.5);
-    }
+    // Phase 19: center letter-glyph overlay (F/B/H/L) removed per the
+    // "no text labels for entities" directive. Building identity now
+    // comes from silhouette, roof color, and door/window detailing.
+    // The Phase-14 special-building badge (tavern/dungeon/apothecary)
+    // above keeps its iconographic symbol (‖ + 🍺) since those are
+    // icons, not letter placeholders.
   }
 
   /** Phase 5: draw a wreck — a few broken stones in dark grey + soot. */
