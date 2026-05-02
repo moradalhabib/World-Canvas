@@ -19,6 +19,9 @@ import { tickCivilizationMonth } from "./civilization";
 // Phase 14: Living City Expansion — crime/medical/leisure ticks live in npc.ts
 // and are wired into simulateMonth() right after the per-citizen brain pass.
 import { DesirabilityMap } from "./desirability";
+// Phase 20: SoundManager singleton — wired to smite / bless / level-up /
+// building-complete moments so SFX assets can drop in without a refactor.
+import { sound } from "./SoundManager";
 import { planAndBuild, tryUpgradeHouses } from "./buildAI";
 import {
   getCitizenVisualPos,
@@ -36,7 +39,7 @@ import {
   // Phase 13: Climate Engine
   traumatizeAdjacent,
 } from "./npc";
-import { findPath } from "./pathfinding";
+import { findPath, isWalkable } from "./pathfinding";
 import { tickYear as tickRoyalYear, getLifeStage, notifyDeath, addChronicle, ensureMonarch } from "./royalty";
 import type { Citizen } from "./types";
 
@@ -4420,6 +4423,9 @@ export class GameEngine {
     // the visible NPC, not at the top-down rect center.
     const iso = worldToIso(pos.col, pos.row, ts, grid.rows);
     this.spawnLightning(iso.sx, iso.sy);
+    // Phase 20: SoundManager hook + propagate PANIC to nearby witnesses.
+    sound.onSmite({ x: iso.sx, y: iso.sy, victim: c.name });
+    this.propagatePanic(pos.row, pos.col, c.id);
     c.state = "DEAD";
     c.path = []; c.pathIndex = 0; c.progress = 0;
     c.targetTile = undefined; c.targetBuildingId = undefined;
@@ -4446,6 +4452,9 @@ export class GameEngine {
     const ts = grid.tileSize;
     const iso = worldToIso(col, row, ts, grid.rows);
     this.spawnLightning(iso.sx, iso.sy);
+    // Phase 20: SoundManager hook + propagate PANIC to nearby witnesses.
+    sound.onSmite({ x: iso.sx, y: iso.sy, victim: b.typeId });
+    this.propagatePanic(row, col);
     b.status = "rubble";
     addChronicle(this.state, `A divine bolt reduces a building to rubble.`);
     this.desirability.markDirty();
@@ -4454,6 +4463,128 @@ export class GameEngine {
     if (tile && tile.type !== "water" && tile.type !== "crater") {
       tile.type = "crater";
       this.redrawTerrainTile(row, col);
+    }
+  }
+
+  /**
+   * Phase 20: propagate PANIC to NPCs within `radius` tiles of (row, col)
+   * after a divine smite. Witnesses stop in place, drop into the existing
+   * FLEEING state with a real flee path AWAY from the strike, and pick up
+   * a 6-second `panicUntilMs` window that the UI / thought library reads
+   * as "Panicking".
+   *
+   * IMPORTANT: timers use `Date.now()` (wall-clock ms) to match the read
+   * side in `thoughts.ts` (`buildThought` / `actionLabel` both read
+   * `Date.now()`). Using `state.time.totalRealMs` here would write tiny
+   * sim-time values that always read as "expired" against wall-clock.
+   *
+   * Skip-list: dead, royalty, AND any state that owns transactional fields
+   * (COMBAT owns `combatOpponentId`; IMPRISONED owns dungeon link;
+   * MENTAL_BREAK / PRAYING are owned narrative beats; STEALING / ARRESTING
+   * / HEALING / DRINKING own pairing-with-target / patient-link / tavern
+   * leisure-credit). Without this guard a smite next to the apothecary
+   * would orphan in-flight treatments for a full game-month tick.
+   */
+  private propagatePanic(row: number, col: number, excludeId?: string, radius = 5) {
+    const now = Date.now();
+    const r2 = radius * radius;
+    const grid = this.state.grid;
+    let count = 0;
+    for (const witness of this.state.citizens) {
+      if (witness.id === excludeId) continue;
+      if (witness.state === "DEAD") continue;
+      if (witness.isKing || witness.isQueen || witness.isPrince || witness.isDowagerQueen) continue;
+      const dr = witness.row - row;
+      const dc = witness.col - col;
+      if (dr * dr + dc * dc > r2) continue;
+      // Tag the reactive timer (read by the thought library + UI).
+      witness.panicUntilMs = now + 6000;
+      witness.admireUntilMs = undefined;
+      // Reuse the existing FLEEING state so the renderer + AI tick treat
+      // them as already-fleeing NPCs (animation, no new branch needed).
+      // Skip if already locked in a heavier / transactional state — those
+      // own resources (combat opponent, prisoner link, patient link,
+      // tavern leisure credit) that would orphan if we clobbered state.
+      if (
+        witness.state !== "COMBAT" &&
+        witness.state !== "IMPRISONED" &&
+        witness.state !== "MENTAL_BREAK" &&
+        witness.state !== "PRAYING" &&
+        witness.state !== "STEALING" &&
+        witness.state !== "ARRESTING" &&
+        witness.state !== "HEALING" &&
+        witness.state !== "DRINKING"
+      ) {
+        witness.state = "FLEEING";
+        witness.progress = 0;
+        witness.targetBuildingId = undefined;
+        // Compute an actual flee path AWAY from the strike — same approach
+        // as `traumatizeAdjacent` in npc.ts. Without a real path, the NPC
+        // would just sit in FLEEING for 6s and look broken.
+        const fleeVecCol = witness.col - col; // points away from strike
+        const fleeVecRow = witness.row - row;
+        const vc = fleeVecCol === 0 && fleeVecRow === 0
+          ? (Math.random() < 0.5 ? -1 : 1)
+          : fleeVecCol;
+        const vr = fleeVecCol === 0 && fleeVecRow === 0
+          ? (Math.random() < 0.5 ? -1 : 1)
+          : fleeVecRow;
+        const mag = Math.max(1, Math.abs(vc) + Math.abs(vr));
+        let assigned = false;
+        for (const r of [6, 4, 3, 2]) {
+          const goalCol = Math.max(0, Math.min(grid.cols - 1,
+            Math.round(witness.col + (vc / mag) * r)));
+          const goalRow = Math.max(0, Math.min(grid.rows - 1,
+            Math.round(witness.row + (vr / mag) * r)));
+          if (!isWalkable(grid, goalRow, goalCol)) continue;
+          const path = findPath(grid, witness.row, witness.col, goalRow, goalCol);
+          if (path && path.length > 0) {
+            witness.path = path;
+            witness.pathIndex = 0;
+            witness.targetTile = { row: goalRow, col: goalCol };
+            assigned = true;
+            break;
+          }
+        }
+        if (!assigned) {
+          witness.path = [];
+          witness.pathIndex = 0;
+          witness.targetTile = undefined;
+        }
+      }
+      count++;
+    }
+    if (count > 0) {
+      addChronicle(this.state, `${count} citizen${count === 1 ? "" : "s"} witnessed the divine wrath and fled in panic.`);
+    }
+  }
+
+  /**
+   * Phase 20: propagate ADMIRE to NPCs within `radius` tiles of a bless
+   * impact. Witnesses pause briefly, look up at the light, and the
+   * thought library shows them saying "The Heavens are watching us."
+   * No state change — they keep doing what they were doing, the timer
+   * just tints the UI label and the thought line for ~5 seconds.
+   *
+   * Same wall-clock (`Date.now()`) timer base as `propagatePanic`.
+   */
+  private propagateAdmire(row: number, col: number, excludeId?: string, radius = 5) {
+    const now = Date.now();
+    const r2 = radius * radius;
+    let count = 0;
+    for (const witness of this.state.citizens) {
+      if (witness.id === excludeId) continue;
+      if (witness.state === "DEAD") continue;
+      const dr = witness.row - row;
+      const dc = witness.col - col;
+      if (dr * dr + dc * dc > r2) continue;
+      // Don't override an active panic — wrath beats awe.
+      if (typeof witness.panicUntilMs === "number" && witness.panicUntilMs > now) continue;
+      witness.admireUntilMs = now + 5000;
+      count++;
+    }
+    if (count > 0) {
+      addChronicle(this.state, `${count} citizen${count === 1 ? "" : "s"} stopped to admire the divine light.`);
     }
   }
 
@@ -4472,6 +4603,9 @@ export class GameEngine {
     c.faction = "royalist";
     c.isRebel = false;
     if (c.socialTier === "peasant") c.socialTier = "noble";
+    // Phase 20: bless SFX hook + propagate ADMIRE to nearby witnesses.
+    sound.onBless({ name: c.name });
+    this.propagateAdmire(pos.row, pos.col, c.id);
     addChronicle(this.state, `${c.name} is touched by divine favor — blessed with riches.`);
     // Phase 17: Golden bless particles — 12 motes that float UP and
     // fade out over a full 2 seconds (was 18 motes / 700ms). Slower,

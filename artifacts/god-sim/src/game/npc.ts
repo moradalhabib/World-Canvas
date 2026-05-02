@@ -10,6 +10,8 @@ import type {
 } from "./types";
 import { ALL_TRAITS } from "./types";
 import { findPath, isWalkable } from "./pathfinding";
+// Phase 20: SoundManager hook — fires onLevelUp when a citizen tiers up.
+import { sound } from "./SoundManager";
 import {
   ELDER_AGE,
   ADULT_AGE,
@@ -570,6 +572,12 @@ function tickEconomyAndFaction(
         if (citizen.skills.xp >= XP_PER_LEVEL) {
           citizen.skills.level += 1;
           citizen.skills.xp = 0;
+          // Phase 20: SFX hook (no-op until assets land — see SoundManager).
+          sound.onLevelUp({
+            name: citizen.name,
+            profession: prof,
+            level: citizen.skills.level,
+          });
           addChronicle(
             state,
             `${citizen.name} the ${prof} reaches mastery level ${citizen.skills.level}.`

@@ -1,0 +1,48 @@
+Phase 20: The "Dynasty & Biology" Overhaul
+Acknowledge this prompt. We are moving beyond static sprites. Every citizen must now operate as a dynamic, reactive entity with a distinct visual progression, a cognitive engine, and the ability to grow the population.
+
+1. Population Growth & Reproduction:
+
+The Mating State: If two adult NPCs with high Mood and Social stats are in the same House at NIGHT, and the house has availableCapacity > 0, trigger the Reproduction Event.
+
+Infant/Child Lifecycle:
+
+Spawn an Infant entity. Infants stay near the home and require no food but drain parent energy.
+
+After 2 "Years," the Infant matures into a Child (small sprite, fast movement).
+
+After 5 "Years," the Child matures into a Grade 1 Peasant with limbs and a random trait.
+
+Chronicle Integration: Log every birth: "A new soul, [Name], has joined the realm of King Edward."
+
+2. Limb & Animation Logic (Townsmen Standard):
+
+Visible Limbs: Every NPC (except swaddled Infants) must have distinct arms and legs.
+
+Walking Animation: Implement a 2-frame "Limb Swing." Arms and legs must move in opposition to create a natural gait.
+
+Interaction State: If an NPC is SOCIALIZING or PLAYING, animate arms to perform "talking" or "waving" gestures.
+
+3. NPC Visual Grades:
+
+Grade 1 (Commoner): Muted tones, basic limbs.
+
+Grade 2 (Specialist): Vibrant colors, visible tool accessories.
+
+Grade 3 (Noble/King): Fur-trimmed robes, crowns, and a filter: drop-shadow(0 0 3px gold).
+
+Visual Mastery: At Level 5, the tool/accessory must emit a subtle golden glow.
+
+4. Cognitive State & Thoughts:
+
+Thought Generator: Link thoughts to traits. A COWARD like Edward should think "Is that a wolf? I feel exposed" when wandering.
+
+Physical Logistics: During WORKING, NPCs must physically carry a "Resource Sprite" (e.g., a grain sack) to storage.
+
+5. Performance & Balance:
+
+Throttle: Run NPC thought-logic and state checks every 60 frames to maintain 60 FPS.
+
+Hunger Fix: Reduce HUNGER_DRAIN_PER_DAY in civilization.ts by 60% to allow for a creative "God-Sim" pace.
+
+Instruction: Confirm understanding. Execute the "Reproduction & Limb Pass" immediately. I want to see babies in the houses and arms on the workers. NO TEXT LABELS FOR ENTITIES.

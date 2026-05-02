@@ -47,30 +47,10 @@ const CAT_TO_POWER: Record<ToolbarCategory, DivinePower> = {
   chronomancer: "none",
 };
 
-/**
- * Phase 4: Generate the inner monologue line for a tapped NPC. The choice is
- * driven by their highest-priority dramatic stat — royalty/faction first,
- * then the survival drives, then profession flavor, with a quiet default.
- */
-function buildMonologue(c: Citizen): string {
-  if (c.isKing) return "The crown weighs heavy. My subjects must remember their place.";
-  if (c.isDowagerQueen) return "I rule until my son is grown. Let no one forget it.";
-  if (c.isQueen) return "A queen's smile must never falter, no matter the winter.";
-  if (c.isPrince) return "Father trains me for the throne. The day will come.";
-  if (c.state === "COMBAT") return "For the realm! Steel meets steel!";
-  if (c.faction === "rebel" || c.isRebel)
-    return "The true bloodline is broken. We march at dawn.";
-  if (c.state === "PRAYING") return "Heavens, deliver us. The bread is gone.";
-  if (c.hunger > 80) return "The granaries are empty. We will not survive the winter.";
-  if (c.vanity > 80) return "My estates grow larger by the day.";
-  if ((c.safety ?? 100) < 30)
-    return "I have not slept beneath a roof in weeks.";
-  if (c.state === "ROGUE") return "If they will not feed us, we will take what we are owed.";
-  if (c.profession === "Guard") return "My watch never ends.";
-  if (c.profession === "Farmer") return "The wheat grows tall this year — praise the King.";
-  if (c.profession === "Miner") return "Stone for the King's walls — every day, every hour.";
-  return "The seasons turn. The work continues.";
-}
+// Phase 20: monologue line + "Current Action" label now live in the
+// state+trait-driven thoughts library so the same logic powers any future
+// on-canvas UI (NOT a floating label — per spec, no entity text labels).
+import { buildThought, actionLabel } from "./game/thoughts";
 
 const MONTH_NAMES = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -508,38 +488,12 @@ export default function App() {
                     : "Citizen"}
               </span>
             </div>
-            {/* Phase 12: micro-state line + mood bar */}
+            {/* Phase 20: micro-state line (with PANIC/ADMIRE awareness) + mood bar.
+                Label comes from the shared thought library so the on-screen
+                "Current Action" stays in sync with the underlying engine. */}
             {(() => {
               const c = monologue.citizen;
-              const microState = (() => {
-                switch (c.state) {
-                  case "CHATTING": return "Chatting";
-                  case "MENTAL_BREAK":
-                    if (c.breakKind === "DOOMSAYER") return "Mental Break: Doomsayer";
-                    if (c.breakKind === "RECLUSE") return "Mental Break: Recluse";
-                    if (c.breakKind === "THIEF") return "Mental Break: Thief";
-                    return "Mental Break";
-                  case "PRAYING": return "Praying";
-                  case "SLEEPING": return "Sleeping";
-                  case "COMBAT": return "In Combat";
-                  case "DEAD": return "Deceased";
-                  case "FLEEING": return "Fleeing";
-                  case "SEEK_FOOD": return "Seeking Food";
-                  case "ROGUE": return "Rogue";
-                  case "REBEL": return "Rebel";
-                  case "MOVING": return c.targetTile ? "Traveling" : "Walking";
-                  case "WORKING": return "Working";
-                  case "MINISTERING": return "Ministering";
-                  // Phase 14 — Living City Expansion
-                  case "STEALING": return "Stealing";
-                  case "ARRESTING": return "Arresting Thief";
-                  case "IMPRISONED": return "Imprisoned";
-                  case "HEALING": return "Treating Patient";
-                  case "DRINKING": return "At the Tavern";
-                  case "IDLE":
-                  default: return "Idle";
-                }
-              })();
+              const microState = actionLabel(c);
               const mood = typeof c.mood === "number" ? c.mood : 100;
               // Color shifts green → yellow → red as mood drops.
               const moodColor =
@@ -579,7 +533,10 @@ export default function App() {
                 </div>
               );
             })()}
-            <div className="monologue-text">"{buildMonologue(monologue.citizen)}"</div>
+            {/* Phase 20: state+trait-driven thought from the shared library.
+                `gameMonth` is the rotation seed so the line evolves over
+                time without flickering between renders. */}
+            <div className="monologue-text">"{buildThought(monologue.citizen, gameMonth)}"</div>
             {/* Phase 9: Trait + Skill Level + grudge readout. */}
             {(() => {
               const c = monologue.citizen;

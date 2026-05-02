@@ -1,0 +1,44 @@
+Phase 21: The Masterpiece Integration - Life, Growth, & Construction
+Acknowledge this prompt. We are moving into the final polish phase. You are strictly prohibited from "deferring" any visual or logic tasks. We are building a CEO-grade simulation that meets the Townsmen aesthetic and functional benchmarks.
+
+1. Generational Life & Immigration:
+
+Reproduction Engine: Implement the "Circle of Life." If a House has capacity and occupants have high Social/Mood at NIGHT, spawn an Infant (Tier 0: Crawling, stays home).
+
+Aging: Infants become Children (60% scale, fast movement) after 2 years, and Adults after 5 years.
+
+Occasional Immigration: Once every 3-5 years, if Average Mood > 80, spawn 1-3 new Grade 1 Peasants at the map edge. Log: "Travelers drawn by our prosperity have arrived."
+
+2. Premium Visuals & The "Limb Pass":
+
+Expressive NPCs: Every NPC (except infants) MUST have distinct, moving arms and legs. Implement a 2-frame walking gait.
+
+NPC Grades:
+
+Grade 1: Muted tunics.
+
+Grade 2 (Artisan): Vibrant colors + tool-specific accessories.
+
+Grade 3 (Elite/King): Fur-trimmed robes, crowns, and a subtle golden drop-shadow.
+
+Half-Timbered Buildings: Draw dark-wood "X" or vertical beam patterns on building walls. No more plain grey boxes.
+
+3. Construction Scaffolding (New Mechanic):
+
+Buildings must have a Construction State. When placed, render a "Foundation" sprite with wooden scaffolding poles.
+
+The building only "completes" and becomes functional once NPCs in the WORKING state have spent a cumulative 30 seconds at the site.
+
+4. The "Miniature" Aesthetic (Tilt-Shift):
+
+Apply a CSS blur(3px) filter to the top 15% and bottom 15% of the canvas.
+
+Increase global color saturation by 25% to create a vibrant, "toy-set" look.
+
+5. Performance & Economy Balance:
+
+Restore 60 FPS: Move terrain rendering to an offscreen buffer. Throttle NPC cognitive logic to run every 60 frames.
+
+Hunger Fix: Reduce HUNGER_DRAIN_PER_DAY in civilization.ts by 60% to ensure a relaxed, creative pace.
+
+Instruction: Confirm understanding. No more triaging. Deploy the limbs, the life cycle, and the construction scaffolding in a single coordinated push. NO TEXT LABELS FOR ENTITIES.

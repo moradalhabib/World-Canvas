@@ -518,6 +518,23 @@ export interface Citizen {
    */
   memory?: Record<string, number>;
 
+  /* -- Phase 20: Reactive AI / Divine Awareness -- */
+  /**
+   * Wall-clock ms timestamp until which this NPC is in a "PANIC" reaction
+   * after witnessing a divine smite within ~5 tiles. Read as "panicked
+   * now if `panicUntilMs > Date.now()`". Cleared by the next tick once
+   * the timer expires. Stored on the Citizen (not a separate map) so it
+   * survives save/load without a v14 migration — the value is just a
+   * number and `> now` is always false on a stale save.
+   */
+  panicUntilMs?: number;
+  /**
+   * Wall-clock ms timestamp until which this NPC is "ADMIRING" after
+   * witnessing a divine bless within ~5 tiles. Same shape & lifetime
+   * semantics as `panicUntilMs`.
+   */
+  admireUntilMs?: number;
+
   /* -- Phase 12: Societal Fabric Engine (Genetics, Psychology, Contagion) -- */
   /** Family / dynasty surname (e.g. "Baker"). Inherited from mother on birth. */
   lastName?: string;
