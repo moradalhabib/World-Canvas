@@ -73,7 +73,33 @@ export interface GameState {
    *  metronomic). Initialized to current gameYear on fresh state so the
    *  realm doesn't get a free wave of immigrants on Year 1. */
   lastImmigrationYear: number;
+  /** Phase 23: current civilization era. Drives the AssetSkinMap lookup
+   *  in the renderer — every sprite key is resolved as
+   *  `Assets[currentEra].buildings.<typeId>` etc. — and gates era-flavored
+   *  cognitive thoughts (e.g. "sabertooth" in STONE_AGE vs "wolf" in
+   *  MEDIEVAL). Defaults to MEDIEVAL on fresh state and on legacy save
+   *  migration; the EraController is wired but no automatic progression
+   *  trigger fires yet — eras advance only via explicit `engine.setEra(...)`.
+   */
+  currentEra: Era;
 }
+
+/* ── Phase 23: Civilization Eras ── */
+
+/**
+ * The three primary eras of the evolutionary God-sim. Each era is a
+ * "skin" — same gameplay systems (citizens, buildings, needs, royalty),
+ * but a different visual + thematic vocabulary:
+ *   - STONE_AGE:    huts, mammoth-hunters, sabertooth predators
+ *   - MEDIEVAL:     half-timber houses, peasants/nobles, wolf predators
+ *   - INDUSTRIAL:   brick + smokestacks, workers/foremen, industrial pests
+ *
+ * Phase 23 ships the type + the asset-skin lookup architecture only;
+ * MEDIEVAL is the only skin currently populated in the AssetSkinMap.
+ * STONE_AGE and INDUSTRIAL are reserved so future asset packs slot in
+ * with zero engine changes.
+ */
+export type Era = "STONE_AGE" | "MEDIEVAL" | "INDUSTRIAL";
 
 /** Phase 21: ms of cumulative WORKING-NPC time required to finish a
  *  building. At a typical 60fps that's ~30 real seconds of one worker

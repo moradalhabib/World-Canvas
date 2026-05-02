@@ -112,7 +112,7 @@ const SAVE_KEY = "god_sim_state";
  *        lastImmigrationYear to the current gameYear (so older saves
  *        don't get a free immigrant wave the moment they load).
  */
-const CURRENT_VERSION = 14;
+const CURRENT_VERSION = 15;
 const INITIAL_CITIZEN_COUNT = 6;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;
@@ -202,6 +202,10 @@ export function createDefaultState(): GameState {
     // realm doesn't get a free immigrant wave on Year 1 before the
     // founders have proven anything.
     lastImmigrationYear: 1,
+    // Phase 23: every fresh realm starts in the MEDIEVAL era. The
+    // EraController is wired but no automatic era-progression trigger
+    // fires yet — only an explicit `engine.setEra(...)` call advances it.
+    currentEra: "MEDIEVAL",
   };
   // Phase 3B: anoint the founding King + Queen and write the first chronicle.
   anointInitialKing(state);
@@ -272,6 +276,8 @@ interface SerializedState {
   animals?: Animal[];
   /* Phase 21 */
   lastImmigrationYear?: number;
+  /* Phase 23 */
+  currentEra?: GameState["currentEra"];
 }
 
 /** Phase 13: deterministic season from game month (Mar-May Spring, etc.). */
@@ -313,6 +319,9 @@ export function saveState(state: GameState): void {
       // Phase 16: persist sheep so they don't snap to fresh-spawn locations
       // on reload. Each sheep is ~10 fields, so 10 sheep ≈ negligible.
       animals: state.animals ?? [],
+      // Phase 21/23: persist immigration cooldown + era.
+      lastImmigrationYear: state.lastImmigrationYear,
+      currentEra: state.currentEra,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(serialized));
   } catch (e) {
@@ -343,7 +352,9 @@ export function loadState(): GameState | null {
       s.version !== 9 &&
       s.version !== 10 && // Phase 13 saves migrate cleanly to Phase 14
       s.version !== 11 && // Phase 14 saves migrate cleanly to Phase 16
-      s.version !== 12    // Phase 16 saves migrate cleanly to Phase 17
+      s.version !== 12 && // Phase 16 saves migrate cleanly to Phase 17
+      s.version !== 13 && // Phase 17/18/19/20 saves migrate cleanly to Phase 21
+      s.version !== 14    // Phase 21/22 saves migrate cleanly to Phase 23
     ) {
       return null;
     }
@@ -355,6 +366,8 @@ export function loadState(): GameState | null {
     let citizens: Citizen[];
     if (
       (s.version === CURRENT_VERSION ||
+        s.version === 14 || // Phase 21/22 saves — preserve through Phase 23 EraController upgrade.
+        s.version === 13 || // Phase 17/18/19/20 saves — preserve through Phase 21 upgrade.
         s.version === 12 || // Phase 16 saves — preserve citizens through Phase 17 upgrade.
         s.version === 11 || // Phase 14 saves carry full citizen state — DO NOT
                             // wipe to fresh-spawn population on Phase 16 upgrade.
@@ -428,6 +441,10 @@ export function loadState(): GameState | null {
       // current year so older realms don't get a free wave the instant
       // they load. Saves that already have the field keep it.
       lastImmigrationYear: s.lastImmigrationYear ?? s.time.gameYear,
+      // Phase 23 backfill — every legacy realm is by definition MEDIEVAL
+      // (it's the only era that's ever existed in shipped builds). Future
+      // saves persist the era explicitly.
+      currentEra: s.currentEra ?? "MEDIEVAL",
     };
 
     // Phase 21 backfill — every pre-v14 building was implicitly complete.

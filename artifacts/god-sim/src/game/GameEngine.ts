@@ -43,7 +43,7 @@ import { findPath, isWalkable } from "./pathfinding";
 import { tickYear as tickRoyalYear, getLifeStage, notifyDeath, addChronicle, ensureMonarch } from "./royalty";
 import type { Citizen } from "./types";
 import { CONSTRUCTION_WORK_MS_REQUIRED } from "./types";
-import { AssetManager, SPRITE_MANIFEST } from "./AssetManager";
+import { AssetManager, ASSET_SKIN_MAP } from "./AssetManager";
 
 /* Phase 4: Combat tunables */
 const COMBAT_RADIUS_TILES = 2;
@@ -363,7 +363,7 @@ export class GameEngine {
     // every draw call falls back to procedural rendering until the
     // matching Image fires onload.
     this.spriteAssets = new AssetManager(import.meta.env.BASE_URL);
-    this.spriteAssets.preload(SPRITE_MANIFEST);
+    this.spriteAssets.preload(ASSET_SKIN_MAP);
 
     // Initialize desirability map and seed with terrain + any saved buildings.
     this.desirability = new DesirabilityMap(this.state.grid.rows, this.state.grid.cols);
@@ -1185,7 +1185,7 @@ export class GameEngine {
     // sprite is the entire visual (drawn in the FRONT layer below); the
     // floor / back-structure / front-and-roof procedural decomposition
     // is suppressed so we don't double-render planks behind the sprite.
-    if (this.spriteAssets.has(`building.${b.typeId}`)) return;
+    if (this.spriteAssets.has(this.state.currentEra, `building.${b.typeId}`)) return;
     // Phase 21: scaffolded foundations replace the normal floor + furniture
     // for any building that hasn't completed construction yet. Drawn ONLY in
     // the floor layer; the back-wall + front-wall + roof renderers early-out
@@ -1509,7 +1509,7 @@ export class GameEngine {
     if (b.status === "rubble") return;
     if (def.category === "service" && b.typeId === "well") return;
     // Phase 22 — sprite handles the whole structure when loaded.
-    if (this.spriteAssets.has(`building.${b.typeId}`)) return;
+    if (this.spriteAssets.has(this.state.currentEra, `building.${b.typeId}`)) return;
     // Phase 21: incomplete buildings have no back wall — the foundation
     // layer drew the scaffolding visual already.
     if (b.complete === false) return;
@@ -1574,13 +1574,13 @@ export class GameEngine {
     // the sprite sits in the depth queue at the same sortKey as the
     // procedural front wall, preserving NPC-behind-wall occlusion ordering.
     // Roof transparency (when an NPC is inside) is honored via globalAlpha.
-    if (this.spriteAssets.has(`building.${b.typeId}`)) {
+    if (this.spriteAssets.has(this.state.currentEra, `building.${b.typeId}`)) {
       const ctx = this.ctx;
       const prevAlpha = ctx.globalAlpha;
       // Mix roofAlpha (0..1) into the sprite blit so the dollhouse
       // cutaway still works when an NPC enters the building.
       ctx.globalAlpha = prevAlpha * Math.max(roofAlpha, 0.6);
-      this.spriteAssets.tryDraw(ctx, `building.${b.typeId}`, x, y, ts);
+      this.spriteAssets.tryDraw(ctx, this.state.currentEra, `building.${b.typeId}`, x, y, ts);
       ctx.globalAlpha = prevAlpha;
       return;
     }
@@ -1841,7 +1841,7 @@ export class GameEngine {
     // blit it (anchored bottom-center on the iso diamond) and skip the
     // procedural well/house draw entirely. Falls through harmlessly when
     // no PNG exists, preserving the current visual 1:1.
-    if (this.spriteAssets.tryDraw(ctx, `building.${b.typeId}`, x, y, ts)) return;
+    if (this.spriteAssets.tryDraw(ctx, this.state.currentEra, `building.${b.typeId}`, x, y, ts)) return;
     const pad = ts * 0.15;
     const w = ts - pad * 2;
     const h = ts - pad * 2;
@@ -2662,11 +2662,12 @@ export class GameEngine {
     // sprite-body call with the procedural overlays still drawn around
     // it. Wiring the pipeline first is the explicit Phase 22 ask.
     const spriteKey = this.resolveCitizenSpriteKey(c);
-    if (spriteKey && this.spriteAssets.has(spriteKey)) {
+    if (spriteKey) {
       const tileX = sx - ts * 0.5;
       const tileY = sy - ts * 0.5;
-      this.spriteAssets.tryDraw(ctx, spriteKey, tileX, tileY, ts);
-      return;
+      if (this.spriteAssets.tryDraw(ctx, this.state.currentEra, spriteKey, tileX, tileY, ts)) {
+        return;
+      }
     }
 
     const radius = ts * 0.18; // legacy radius — kept for path-line spacing
@@ -3970,9 +3971,48 @@ export class GameEngine {
     if (c.socialTier === "noble") candidates.push("character.noble");
     candidates.push("character.peasant");
     for (const key of candidates) {
-      if (this.spriteAssets.has(key)) return key;
+      if (this.spriteAssets.has(this.state.currentEra, key)) return key;
     }
     return null;
+  }
+
+  /**
+   * Phase 23 — EraController. Public API to advance the civilization to a
+   * new era. Flips `state.currentEra` (which immediately reroutes every
+   * subsequent sprite lookup through the new era's skin in ASSET_SKIN_MAP)
+   * AND triggers a "Transition Scaffolding" event: every existing building
+   * is reset to `complete=false, constructionWorkMs=0` so it visually
+   * reverts to the foundation/scaffolding state from Phase 21 and must be
+   * re-completed by working citizens — this time revealing the new era's
+   * architectural style on completion. A chronicle entry marks the
+   * transition. No automatic trigger fires yet; era progression is
+   * gated behind explicit calls to this method (future phases will wire
+   * an in-game research/population threshold).
+   */
+  public setEra(newEra: import("./types").Era): void {
+    if (this.state.currentEra === newEra) return;
+    const oldEra = this.state.currentEra;
+    this.state.currentEra = newEra;
+    // Transition Scaffolding pass — every standing structure goes back
+    // into "under construction" so the renderer shows scaffolding plots
+    // until citizens accumulate construction work in the new era.
+    for (const b of this.state.buildings) {
+      if (b.status === "rubble") continue;
+      b.complete = false;
+      b.constructionWorkMs = 0;
+    }
+    addChronicle(
+      this.state,
+      `The ${this.eraDisplayName(oldEra)} fades; the ${this.eraDisplayName(newEra)} dawns. Our settlements transform.`,
+    );
+  }
+
+  private eraDisplayName(era: import("./types").Era): string {
+    switch (era) {
+      case "STONE_AGE": return "Stone Age";
+      case "MEDIEVAL": return "Medieval Age";
+      case "INDUSTRIAL": return "Industrial Age";
+    }
   }
 
   /**
