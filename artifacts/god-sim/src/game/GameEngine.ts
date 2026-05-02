@@ -123,6 +123,18 @@ export class GameEngine {
   private npcSprites = new Map<string, HTMLCanvasElement>();
   private npcSpriteTileSize = 0;
 
+  /**
+   * Phase 10: Composite NPC sprites — keyed by citizen.id, value carries the
+   * cached sprite plus a numeric `sig` summarizing tier/profession/trait/
+   * life-stage/mastery/royalty. The sig is compared with a freshly-computed
+   * one each frame: equal → reuse; different → rebuild. Storing a number
+   * (not a template-literal string) avoids per-frame allocations in the
+   * sprite hot path. Entries are evicted via simple FIFO when count >= cap.
+   */
+  private compositeSprites = new Map<string, { sig: number; sprite: HTMLCanvasElement }>();
+  private compositeSpriteTileSize = 0;
+  private readonly COMPOSITE_CACHE_MAX = 200;
+
   /** Hidden land-value map driving social hierarchy. */
   private desirability!: DesirabilityMap;
   /** Months between full desirability recomputes (it's also marked dirty on builds). */
@@ -297,22 +309,31 @@ export class GameEngine {
       this.state.time.gameYear * 12 + this.state.time.gameMonth;
   }
 
+  /**
+   * Phase 10: Procedural biome textures — value-noise base + biome-specific
+   * overlay (water waves, grass blades, forest canopy clumps, mountain
+   * cracks, desert dunes, snow drifts). Pattern is 96×96 to keep tiling
+   * less obvious than tileSize-square. Patterns are biome-specific seamless
+   * canvases used as `CanvasPattern` repeats.
+   */
   private buildBiomePatterns() {
-    const tileSize = this.state.grid.tileSize;
+    const PATTERN = 96;
     const types: TileType[] = [
       "grass", "water", "forest", "mountain", "desert", "snow", "crater",
     ];
     for (const type of types) {
       const off = document.createElement("canvas");
-      off.width = tileSize;
-      off.height = tileSize;
+      off.width = PATTERN;
+      off.height = PATTERN;
       const p = off.getContext("2d")!;
 
+      // Base fill
       p.fillStyle = TILE_COLORS[type];
-      p.fillRect(0, 0, tileSize, tileSize);
+      p.fillRect(0, 0, PATTERN, PATTERN);
 
       const [light, dark] = TILE_SPECKLE_COLORS[type];
-      const density = SPECKLE_DENSITY[type];
+      const lightRGB = this.hexToRgb(light);
+      const darkRGB = this.hexToRgb(dark);
 
       let seed = type.charCodeAt(0) * 9301 + 49297;
       const rand = () => {
@@ -320,23 +341,137 @@ export class GameEngine {
         return seed / 233280;
       };
 
-      for (let i = 0; i < density; i++) {
-        const x = rand() * tileSize;
-        const y = rand() * tileSize;
-        const r = 0.4 + rand() * 1.6;
-        const useLight = rand() > 0.5;
-        const alpha = 0.15 + rand() * 0.45;
-        p.globalAlpha = alpha;
-        p.fillStyle = useLight ? light : dark;
-        p.beginPath();
-        p.arc(x, y, r, 0, Math.PI * 2);
-        p.fill();
+      // Value-noise blend over the base fill via per-pixel ImageData mixing.
+      const img = p.getImageData(0, 0, PATTERN, PATTERN);
+      const data = img.data;
+      const noiseAlpha = type === "water" ? 0.18 : type === "snow" ? 0.10 : 0.30;
+      for (let i = 0; i < PATTERN * PATTERN; i++) {
+        // Two-octave value noise sample
+        const n1 = rand();
+        const n2 = (rand() + n1) * 0.5;
+        const n = n1 * 0.6 + n2 * 0.4;
+        const useLight = n > 0.5;
+        const intensity = (useLight ? n - 0.5 : 0.5 - n) * 2; // 0..1
+        const rgb = useLight ? lightRGB : darkRGB;
+        const o = i * 4;
+        const mix = noiseAlpha * intensity;
+        data[o]     = Math.round(data[o]     * (1 - mix) + rgb[0] * mix);
+        data[o + 1] = Math.round(data[o + 1] * (1 - mix) + rgb[1] * mix);
+        data[o + 2] = Math.round(data[o + 2] * (1 - mix) + rgb[2] * mix);
       }
-      p.globalAlpha = 1;
+      p.putImageData(img, 0, 0);
+
+      // Biome-specific overlays for richness
+      if (type === "water") {
+        p.strokeStyle = "rgba(255,255,255,0.10)";
+        p.lineWidth = 1;
+        for (let y = 6; y < PATTERN; y += 11) {
+          p.beginPath();
+          p.moveTo(0, y);
+          for (let x = 0; x <= PATTERN; x += 6) {
+            p.lineTo(x, y + Math.sin(x * 0.45) * 1.4);
+          }
+          p.stroke();
+        }
+      } else if (type === "grass") {
+        for (let i = 0; i < 36; i++) {
+          const x = rand() * PATTERN;
+          const y = rand() * PATTERN;
+          p.strokeStyle = "rgba(50,80,35,0.55)";
+          p.lineWidth = 1;
+          p.beginPath();
+          p.moveTo(x, y);
+          p.lineTo(x + (rand() - 0.5) * 1.4, y - 2 - rand() * 1.5);
+          p.stroke();
+        }
+      } else if (type === "forest") {
+        for (let i = 0; i < 7; i++) {
+          const x = rand() * PATTERN;
+          const y = rand() * PATTERN;
+          const r = 4 + rand() * 5;
+          p.fillStyle = "rgba(20,40,20,0.32)";
+          p.beginPath();
+          p.arc(x, y, r, 0, Math.PI * 2);
+          p.fill();
+          p.fillStyle = "rgba(80,120,60,0.25)";
+          p.beginPath();
+          p.arc(x - r * 0.3, y - r * 0.3, r * 0.5, 0, Math.PI * 2);
+          p.fill();
+        }
+      } else if (type === "mountain") {
+        p.strokeStyle = "rgba(0,0,0,0.22)";
+        p.lineWidth = 1;
+        for (let i = 0; i < 10; i++) {
+          const x1 = rand() * PATTERN;
+          const y1 = rand() * PATTERN;
+          p.beginPath();
+          p.moveTo(x1, y1);
+          p.lineTo(x1 + (rand() - 0.5) * 26, y1 + (rand() - 0.5) * 26);
+          p.stroke();
+        }
+        // Granite speckles
+        for (let i = 0; i < 30; i++) {
+          p.fillStyle = `rgba(240,240,240,${0.15 + rand() * 0.2})`;
+          p.fillRect(rand() * PATTERN, rand() * PATTERN, 1.2, 1.2);
+        }
+      } else if (type === "desert") {
+        // Dune curves
+        p.strokeStyle = "rgba(180,140,80,0.35)";
+        p.lineWidth = 1;
+        for (let y = 8; y < PATTERN; y += 14) {
+          p.beginPath();
+          p.moveTo(0, y);
+          for (let x = 0; x <= PATTERN; x += 8) {
+            p.lineTo(x, y + Math.sin(x * 0.25 + y) * 2);
+          }
+          p.stroke();
+        }
+      } else if (type === "snow") {
+        // Soft drift highlights
+        for (let i = 0; i < 14; i++) {
+          const x = rand() * PATTERN;
+          const y = rand() * PATTERN;
+          const r = 6 + rand() * 8;
+          const grad = p.createRadialGradient(x, y, 0, x, y, r);
+          grad.addColorStop(0, "rgba(255,255,255,0.35)");
+          grad.addColorStop(1, "rgba(255,255,255,0)");
+          p.fillStyle = grad;
+          p.beginPath();
+          p.arc(x, y, r, 0, Math.PI * 2);
+          p.fill();
+        }
+      } else if (type === "crater") {
+        // Faint scorched rings
+        for (let i = 0; i < 4; i++) {
+          const x = rand() * PATTERN;
+          const y = rand() * PATTERN;
+          const r = 6 + rand() * 10;
+          p.strokeStyle = "rgba(20,10,5,0.4)";
+          p.lineWidth = 1;
+          p.beginPath();
+          p.arc(x, y, r, 0, Math.PI * 2);
+          p.stroke();
+        }
+      }
+
+      // Reference SPECKLE_DENSITY constant to keep symbol valid for callers
+      void SPECKLE_DENSITY[type];
 
       const pat = this.ctx.createPattern(off, "repeat");
       if (pat) this.biomePatterns.set(type, pat);
     }
+  }
+
+  private hexToRgb(hex: string): [number, number, number] {
+    const h = hex.replace("#", "");
+    const full = h.length === 3
+      ? h.split("").map((c) => c + c).join("")
+      : h.padEnd(6, "0").slice(0, 6);
+    return [
+      parseInt(full.slice(0, 2), 16),
+      parseInt(full.slice(2, 4), 16),
+      parseInt(full.slice(4, 6), 16),
+    ];
   }
 
   private hexToRgba(hex: string, alpha: number): string {
@@ -481,6 +616,14 @@ export class GameEngine {
     }
   }
 
+  /**
+   * Phase 10: Faux-isometric building render. Each non-service building gets:
+   *   - Soft elongated drop shadow on the ground (longer at "day")
+   *   - Right-side wall (parallelogram) shaded darker for 3D effect
+   *   - Front wall with horizontal "wood/stone grain" lines (texture)
+   *   - Pitched gable roof with "shingle/thatch" texture lines
+   *   - Tier-specific gold accent for high-class manors
+   */
   private drawBuilding(
     b: Building,
     def: ReturnType<typeof getBuildingDef>,
@@ -489,7 +632,6 @@ export class GameEngine {
     ts: number
   ) {
     const ctx = this.ctx;
-    // Inset so building doesn't touch tile edges
     const pad = ts * 0.15;
     const w = ts - pad * 2;
     const h = ts - pad * 2;
@@ -497,57 +639,198 @@ export class GameEngine {
     const py = y + pad;
 
     if (def.category === "service") {
-      // Circular well/service icon
-      ctx.fillStyle = def.fillColor;
+      // Service (well / etc.) — circular with rim shading + glint
+      const cx = x + ts * 0.5;
+      const cy = y + ts * 0.5;
+      // shadow
+      ctx.fillStyle = "rgba(0,0,0,0.30)";
+      ctx.beginPath();
+      ctx.ellipse(cx + ts * 0.05, cy + ts * 0.18, w * 0.42, h * 0.10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // body
+      const grad = ctx.createRadialGradient(cx - w * 0.15, cy - h * 0.15, 0, cx, cy, w * 0.5);
+      grad.addColorStop(0, def.fillColor);
+      grad.addColorStop(1, this.shadeHex(def.fillColor, -0.35));
+      ctx.fillStyle = grad;
       ctx.strokeStyle = def.roofColor;
       ctx.lineWidth = ts * 0.06;
       ctx.beginPath();
-      ctx.arc(x + ts * 0.5, y + ts * 0.5, w * 0.42, 0, Math.PI * 2);
+      ctx.arc(cx, cy, w * 0.42, 0, Math.PI * 2);
       ctx.fill();
+      ctx.stroke();
+      // inner ring
+      ctx.strokeStyle = "rgba(0,0,0,0.45)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, w * 0.30, 0, Math.PI * 2);
       ctx.stroke();
       return;
     }
 
-    // House / production: walls + roof
-    const wallH = h * 0.6;
+    // ---- Faux-isometric house / production ----
+    const wallH = h * 0.55;
     const roofH = h * 0.45;
+    const wallTopY = py + roofH * 0.55;
+    const wallBotY = wallTopY + wallH;
+    const isNight = this.state.dayNight === "night";
 
-    // Drop shadow under building
-    ctx.fillStyle = "rgba(0, 0, 0, 0.32)";
+    // Soft elongated drop shadow (longer at day, smaller at night)
+    ctx.fillStyle = isNight ? "rgba(0,0,0,0.20)" : "rgba(0,0,0,0.36)";
     ctx.beginPath();
-    ctx.ellipse(x + ts * 0.5, y + ts * 0.92, w * 0.42, h * 0.08, 0, 0, Math.PI * 2);
+    const shadowOff = isNight ? 0.02 : 0.10;
+    ctx.ellipse(
+      x + ts * (0.5 + shadowOff),
+      y + ts * 0.93,
+      w * (0.46 + shadowOff),
+      h * 0.09,
+      0, 0, Math.PI * 2
+    );
     ctx.fill();
 
-    // Walls
-    ctx.fillStyle = def.fillColor;
-    ctx.fillRect(px, py + roofH * 0.55, w, wallH);
-    // Subtle wall outline
-    ctx.strokeStyle = "rgba(0,0,0,0.4)";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(px, py + roofH * 0.55, w, wallH);
-
-    // Roof (triangle)
-    ctx.fillStyle = def.roofColor;
+    // Right-side wall (faux-iso): parallelogram offset to upper-right
+    const sideDepth = w * 0.14;
+    const sideColor = this.shadeHex(def.fillColor, -0.35);
+    ctx.fillStyle = sideColor;
     ctx.beginPath();
-    ctx.moveTo(px - w * 0.06, py + roofH * 0.6);
-    ctx.lineTo(px + w * 0.5, py);
-    ctx.lineTo(px + w + w * 0.06, py + roofH * 0.6);
+    ctx.moveTo(px + w, wallTopY);
+    ctx.lineTo(px + w + sideDepth, wallTopY - sideDepth * 0.6);
+    ctx.lineTo(px + w + sideDepth, wallBotY - sideDepth * 0.6);
+    ctx.lineTo(px + w, wallBotY);
     ctx.closePath();
     ctx.fill();
     ctx.strokeStyle = "rgba(0,0,0,0.5)";
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Tier indicator: gold dot for high-class manors
+    // Front wall fill
+    ctx.fillStyle = def.fillColor;
+    ctx.fillRect(px, wallTopY, w, wallH);
+
+    // Wood/stone grain — thin horizontal lines
+    ctx.strokeStyle = "rgba(0,0,0,0.18)";
+    ctx.lineWidth = 0.6;
+    for (let gy = wallTopY + wallH * 0.25; gy < wallBotY; gy += wallH * 0.22) {
+      ctx.beginPath();
+      ctx.moveTo(px + 1, gy);
+      ctx.lineTo(px + w - 1, gy);
+      ctx.stroke();
+    }
+    // Subtle wall vertical seam (door slot)
+    if (def.category !== "production") {
+      ctx.fillStyle = "rgba(40,20,10,0.55)";
+      const doorW = w * 0.18;
+      const doorH = wallH * 0.55;
+      ctx.fillRect(px + w * 0.5 - doorW * 0.5, wallBotY - doorH, doorW, doorH);
+      // Door arch top
+      ctx.fillStyle = "rgba(60,30,15,0.55)";
+      ctx.beginPath();
+      ctx.arc(px + w * 0.5, wallBotY - doorH, doorW * 0.5, Math.PI, 0);
+      ctx.fill();
+    } else {
+      // Production: small dark window
+      ctx.fillStyle = "rgba(80,60,25,0.7)";
+      ctx.fillRect(px + w * 0.30, wallTopY + wallH * 0.25, w * 0.18, wallH * 0.30);
+      ctx.fillRect(px + w * 0.55, wallTopY + wallH * 0.25, w * 0.18, wallH * 0.30);
+    }
+
+    // Wall outline
+    ctx.strokeStyle = "rgba(0,0,0,0.55)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px, wallTopY, w, wallH);
+
+    // ---- Roof (gable) with shingle texture ----
+    const roofPeakX = px + w * 0.5;
+    const roofPeakY = py;
+    const roofLeftX = px - w * 0.06;
+    const roofRightX = px + w + w * 0.06;
+    const roofBaseY = wallTopY;
+
+    // Left roof slope (lit)
+    ctx.fillStyle = def.roofColor;
+    ctx.beginPath();
+    ctx.moveTo(roofLeftX, roofBaseY);
+    ctx.lineTo(roofPeakX, roofPeakY);
+    ctx.lineTo(roofPeakX, roofBaseY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Right roof slope (shaded) with iso side
+    ctx.fillStyle = this.shadeHex(def.roofColor, -0.25);
+    ctx.beginPath();
+    ctx.moveTo(roofPeakX, roofPeakY);
+    ctx.lineTo(roofRightX, roofBaseY);
+    ctx.lineTo(roofPeakX, roofBaseY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Iso roof depth wedge along right side
+    ctx.fillStyle = this.shadeHex(def.roofColor, -0.45);
+    ctx.beginPath();
+    ctx.moveTo(roofRightX, roofBaseY);
+    ctx.lineTo(roofRightX + sideDepth, roofBaseY - sideDepth * 0.6);
+    ctx.lineTo(roofPeakX + sideDepth * 0.5, roofPeakY - sideDepth * 0.3);
+    ctx.lineTo(roofPeakX, roofPeakY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Shingle texture: parallel rows of short ticks on each slope
+    ctx.strokeStyle = "rgba(0,0,0,0.30)";
+    ctx.lineWidth = 0.6;
+    for (let s = 0.2; s < 1; s += 0.22) {
+      // Left slope row
+      const lx1 = roofLeftX + (roofPeakX - roofLeftX) * s;
+      const ly1 = roofBaseY + (roofPeakY - roofBaseY) * s;
+      const lx2 = roofPeakX;
+      const ly2 = roofBaseY + (roofPeakY - roofBaseY) * s;
+      ctx.beginPath();
+      ctx.moveTo(lx1, ly1);
+      ctx.lineTo(lx2, ly2);
+      ctx.stroke();
+      // Right slope row
+      const rx1 = roofPeakX;
+      const ry1 = roofBaseY + (roofPeakY - roofBaseY) * s;
+      const rx2 = roofRightX + (roofPeakX - roofRightX) * s;
+      const ry2 = roofBaseY + (roofPeakY - roofBaseY) * s;
+      ctx.beginPath();
+      ctx.moveTo(rx1, ry1);
+      ctx.lineTo(rx2, ry2);
+      ctx.stroke();
+    }
+
+    // Roof ridge highlight + outline
+    ctx.strokeStyle = "rgba(0,0,0,0.6)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(roofLeftX, roofBaseY);
+    ctx.lineTo(roofPeakX, roofPeakY);
+    ctx.lineTo(roofRightX, roofBaseY);
+    ctx.stroke();
+
+    // Gold tier indicator for high manors
     if (b.typeId === "house_high") {
       ctx.fillStyle = "#ffd84a";
       ctx.shadowColor = "rgba(255, 200, 50, 0.8)";
       ctx.shadowBlur = ts * 0.12;
       ctx.beginPath();
-      ctx.arc(x + ts * 0.5, py - h * 0.08, ts * 0.07, 0, Math.PI * 2);
+      ctx.arc(x + ts * 0.5, py - h * 0.10, ts * 0.07, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
     }
+
+    // Window glow at night
+    if (isNight && def.category !== "production") {
+      ctx.fillStyle = "rgba(255,210,120,0.65)";
+      ctx.fillRect(px + w * 0.18, wallTopY + wallH * 0.22, w * 0.10, wallH * 0.18);
+      ctx.fillRect(px + w * 0.72, wallTopY + wallH * 0.22, w * 0.10, wallH * 0.18);
+    }
+  }
+
+  /** Lighten (>0) or darken (<0) a #rrggbb hex color by `amt` in [-1, 1]. */
+  private shadeHex(hex: string, amt: number): string {
+    const [r, g, b] = this.hexToRgb(hex);
+    const adj = (v: number) =>
+      Math.max(0, Math.min(255, Math.round(v + (amt < 0 ? v * amt : (255 - v) * amt))));
+    return `rgb(${adj(r)},${adj(g)},${adj(b)})`;
   }
 
   /**
@@ -647,6 +930,401 @@ export class GameEngine {
     this.npcSpriteTileSize = ts;
   }
 
+  /* =====================================================================
+   * Phase 10: Composite (per-NPC) sprite system
+   * ===================================================================== */
+
+  /** djb2-ish string hash → unsigned 32-bit int. Stable across runs. */
+  private hashId(id: string): number {
+    let h = 5381;
+    for (let i = 0; i < id.length; i++) h = (h * 33 + id.charCodeAt(i)) | 0;
+    return h >>> 0;
+  }
+
+  /** Mulberry32 — deterministic PRNG for one citizen. */
+  private makeRng(seed: number) {
+    let s = seed | 0;
+    return () => {
+      s = (s + 0x6D2B79F5) | 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  private getTunicPalette(tier: "peasant" | "noble" | "king" | "middle" | string, rng: () => number): { top: string; bottom: string } {
+    if (tier === "king") return { top: "#7a1419", bottom: "#3d0508" };           // Deep crimson
+    if (tier === "noble") {
+      const opts = [["#A044F5", "#5A1B95"], ["#D4AF37", "#7A6312"], ["#1d4ed8", "#0c2660"]];
+      const c = opts[Math.floor(rng() * opts.length)];
+      return { top: c[0], bottom: c[1] };
+    }
+    if (tier === "middle") {
+      const opts = [["#3a7a3a", "#1f4521"], ["#2563eb", "#13347d"], ["#5b6b8a", "#2e3a52"]];
+      const c = opts[Math.floor(rng() * opts.length)];
+      return { top: c[0], bottom: c[1] };
+    }
+    // peasant
+    const opts = [["#B8956F", "#6E5440"], ["#8a7060", "#4a3829"], ["#9a8870", "#5a4a3a"], ["#7d6b58", "#3f3424"]];
+    const c = opts[Math.floor(rng() * opts.length)];
+    return { top: c[0], bottom: c[1] };
+  }
+
+  private roundRect(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.lineTo(x + w - r, y);
+    c.quadraticCurveTo(x + w, y, x + w, y + r);
+    c.lineTo(x + w, y + h - r);
+    c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    c.lineTo(x + r, y + h);
+    c.quadraticCurveTo(x, y + h, x, y + h - r);
+    c.lineTo(x, y + r);
+    c.quadraticCurveTo(x, y, x + r, y);
+  }
+
+  private drawHair(
+    c: CanvasRenderingContext2D,
+    cx: number, headCy: number, headR: number,
+    color: string, style: number
+  ) {
+    c.fillStyle = color;
+    if (style === 0) {
+      // Cap: top half-disc
+      c.beginPath();
+      c.arc(cx, headCy, headR * 1.05, Math.PI, 0);
+      c.closePath();
+      c.fill();
+    } else if (style === 1) {
+      // Bowl cut: cap + side flares
+      c.beginPath();
+      c.arc(cx, headCy, headR * 1.08, Math.PI * 1.05, Math.PI * -0.05);
+      c.closePath();
+      c.fill();
+      c.fillRect(cx - headR * 1.05, headCy - headR * 0.1, headR * 0.18, headR * 0.6);
+      c.fillRect(cx + headR * 0.87, headCy - headR * 0.1, headR * 0.18, headR * 0.6);
+    } else if (style === 2) {
+      // Long: cap + back drape
+      c.beginPath();
+      c.arc(cx, headCy, headR * 1.05, Math.PI, 0);
+      c.closePath();
+      c.fill();
+      c.fillRect(cx - headR * 0.95, headCy - headR * 0.1, headR * 1.9, headR * 1.1);
+    } else if (style === 3) {
+      // Mohawk strip
+      c.beginPath();
+      c.arc(cx, headCy, headR * 1.02, Math.PI, 0);
+      c.closePath();
+      c.fill();
+      c.fillRect(cx - headR * 0.18, headCy - headR * 1.4, headR * 0.36, headR * 0.5);
+    } else {
+      // Bald top: small fringe only
+      c.beginPath();
+      c.arc(cx, headCy, headR * 1.04, Math.PI * 1.15, Math.PI * -0.15);
+      c.closePath();
+      c.fill();
+    }
+  }
+
+  private drawBeard(
+    c: CanvasRenderingContext2D,
+    cx: number, headCy: number, headR: number,
+    color: string, style: number, _stage: string
+  ) {
+    c.fillStyle = color;
+    if (style === 0) {
+      // Stubble strip
+      c.beginPath();
+      c.arc(cx, headCy + headR * 0.35, headR * 0.7, 0.15, Math.PI - 0.15);
+      c.closePath();
+      c.fill();
+    } else if (style === 1) {
+      // Full beard wedge
+      c.beginPath();
+      c.moveTo(cx - headR * 0.85, headCy + headR * 0.15);
+      c.quadraticCurveTo(cx, headCy + headR * 1.2, cx + headR * 0.85, headCy + headR * 0.15);
+      c.lineTo(cx + headR * 0.6, headCy + headR * 0.5);
+      c.quadraticCurveTo(cx, headCy + headR * 0.85, cx - headR * 0.6, headCy + headR * 0.5);
+      c.closePath();
+      c.fill();
+    } else {
+      // Goatee
+      c.beginPath();
+      c.ellipse(cx, headCy + headR * 0.7, headR * 0.25, headR * 0.32, 0, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+
+  private drawAccessory(
+    c: CanvasRenderingContext2D,
+    cit: Citizen,
+    cx: number, bodyTop: number, bodyW: number, bodyH: number, ts: number
+  ) {
+    const handY = bodyTop + bodyH * 0.45;
+    const rightHandX = cx + bodyW * 0.55;
+    const prof = cit.profession;
+    if (prof === "Farmer") {
+      // Hoe: vertical shaft + diagonal blade
+      c.strokeStyle = "#7a4a1f"; c.lineWidth = Math.max(1.5, ts * 0.04);
+      c.beginPath(); c.moveTo(rightHandX, handY - bodyH * 0.55); c.lineTo(rightHandX, handY + bodyH * 0.20); c.stroke();
+      c.fillStyle = "#9c9c9c";
+      c.beginPath();
+      c.moveTo(rightHandX, handY - bodyH * 0.5);
+      c.lineTo(rightHandX + ts * 0.10, handY - bodyH * 0.42);
+      c.lineTo(rightHandX + ts * 0.10, handY - bodyH * 0.32);
+      c.lineTo(rightHandX, handY - bodyH * 0.4);
+      c.closePath();
+      c.fill();
+    } else if (prof === "Miner") {
+      // Pickaxe: shaft + curved head
+      c.strokeStyle = "#7a4a1f"; c.lineWidth = Math.max(1.5, ts * 0.04);
+      c.beginPath(); c.moveTo(rightHandX, handY - bodyH * 0.5); c.lineTo(rightHandX, handY + bodyH * 0.18); c.stroke();
+      c.strokeStyle = "#5a5a5a"; c.lineWidth = Math.max(2, ts * 0.05);
+      c.beginPath();
+      c.moveTo(rightHandX - ts * 0.10, handY - bodyH * 0.55);
+      c.quadraticCurveTo(rightHandX, handY - bodyH * 0.65, rightHandX + ts * 0.10, handY - bodyH * 0.55);
+      c.stroke();
+    } else if (prof === "Guard") {
+      // Spear (right hand) + small round shield (left hand)
+      c.strokeStyle = "#5a3a1f"; c.lineWidth = Math.max(1.5, ts * 0.035);
+      c.beginPath(); c.moveTo(rightHandX, handY - bodyH * 0.7); c.lineTo(rightHandX, handY + bodyH * 0.25); c.stroke();
+      c.fillStyle = "#c0c0c0";
+      c.beginPath();
+      c.moveTo(rightHandX - ts * 0.04, handY - bodyH * 0.7);
+      c.lineTo(rightHandX + ts * 0.04, handY - bodyH * 0.7);
+      c.lineTo(rightHandX, handY - bodyH * 0.85);
+      c.closePath();
+      c.fill();
+      // Shield
+      c.fillStyle = "#7a3030"; c.strokeStyle = "#3a1010"; c.lineWidth = 1;
+      c.beginPath(); c.arc(cx - bodyW * 0.55, handY, ts * 0.10, 0, Math.PI * 2); c.fill(); c.stroke();
+      c.fillStyle = "#d4af37";
+      c.beginPath(); c.arc(cx - bodyW * 0.55, handY, ts * 0.03, 0, Math.PI * 2); c.fill();
+    }
+  }
+
+  private drawCrown(
+    c: CanvasRenderingContext2D,
+    cx: number, headCy: number, headR: number, ts: number,
+    feminine = false
+  ) {
+    const crownW = ts * (feminine ? 0.16 : 0.20);
+    const crownH = ts * (feminine ? 0.10 : 0.13);
+    const cyTop = headCy - headR - ts * 0.02;
+    c.fillStyle = "#FFD700";
+    if (feminine) {
+      // Tiara: low arc with three points
+      c.beginPath();
+      c.moveTo(cx - crownW / 2, cyTop);
+      c.lineTo(cx - crownW * 0.25, cyTop - crownH * 0.7);
+      c.lineTo(cx, cyTop - crownH * 0.3);
+      c.lineTo(cx + crownW * 0.25, cyTop - crownH * 0.7);
+      c.lineTo(cx + crownW / 2, cyTop);
+      c.closePath();
+      c.fill();
+    } else {
+      // Classic king crown: rect base + 3 spikes + jewel
+      c.fillRect(cx - crownW / 2, cyTop - crownH * 0.4, crownW, crownH * 0.4);
+      c.beginPath();
+      c.moveTo(cx - crownW / 2, cyTop - crownH * 0.4);
+      c.lineTo(cx - crownW * 0.3, cyTop - crownH);
+      c.lineTo(cx - crownW * 0.1, cyTop - crownH * 0.4);
+      c.lineTo(cx, cyTop - crownH);
+      c.lineTo(cx + crownW * 0.1, cyTop - crownH * 0.4);
+      c.lineTo(cx + crownW * 0.3, cyTop - crownH);
+      c.lineTo(cx + crownW / 2, cyTop - crownH * 0.4);
+      c.closePath();
+      c.fill();
+      c.fillStyle = "#dc2626";
+      c.beginPath(); c.arc(cx, cyTop - crownH * 0.18, ts * 0.025, 0, Math.PI * 2); c.fill();
+    }
+    c.strokeStyle = "rgba(120,80,0,0.85)";
+    c.lineWidth = Math.max(1, ts * 0.018);
+    c.stroke();
+  }
+
+  /**
+   * Get (or build) the cached composite sprite for a citizen.
+   * Performance: the visual signature is packed into a single number (no
+   * template-literal allocation per frame). When the citizen's signature
+   * matches the cached one, we just return the canvas. Cache is hard-capped
+   * at COMPOSITE_CACHE_MAX with FIFO eviction (Map preserves insertion order).
+   */
+  private getCompositeSprite(c: Citizen): HTMLCanvasElement {
+    const ts = this.state.grid.tileSize;
+    if (this.compositeSpriteTileSize !== ts) {
+      this.compositeSprites.clear();
+      this.compositeSpriteTileSize = ts;
+    }
+    const stage = getLifeStage(c, this.state.time.gameYear);
+    const master = (c.skills?.level ?? 1) >= 3;
+    const tierN  = c.socialTier === "king" ? 3 : c.socialTier === "noble" ? 2 : 0;
+    const profN  = c.profession === "Farmer" ? 1 : c.profession === "Miner" ? 2 : c.profession === "Guard" ? 3 : 0;
+    const traitN = c.trait === "Zealot" ? 1 : c.trait === "Greedy" ? 2 : c.trait === "Coward" ? 3 : c.trait === "Diligent" ? 4 : 0;
+    const stageN = stage === "child" ? 1 : stage === "elder" ? 2 : 0;
+    const royalN = c.isKing ? 1 : c.isQueen ? 2 : c.isDowagerQueen ? 3 : 0;
+    const sig =
+      tierN |
+      (profN  << 2) |
+      (traitN << 5) |
+      (stageN << 8) |
+      ((master ? 1 : 0) << 10) |
+      (royalN << 11);
+
+    const cached = this.compositeSprites.get(c.id);
+    if (cached && cached.sig === sig) return cached.sprite;
+
+    // Hard-cap eviction (FIFO via Map insertion order). Drop oldest until
+    // strictly under cap before inserting the new entry.
+    while (this.compositeSprites.size >= this.COMPOSITE_CACHE_MAX) {
+      const firstKey = this.compositeSprites.keys().next().value;
+      if (firstKey === undefined) break;
+      this.compositeSprites.delete(firstKey);
+    }
+    const sprite = this.buildCompositeSprite(c, stage, master);
+    this.compositeSprites.set(c.id, { sig, sprite });
+    return sprite;
+  }
+
+  private buildCompositeSprite(
+    c: Citizen,
+    stage: string,
+    master: boolean
+  ): HTMLCanvasElement {
+    const ts = this.state.grid.tileSize;
+    // Sprite canvas covers head + body + accessory + crown overhead. Legs
+    // are drawn live for animation (not baked).
+    const W = Math.ceil(ts * 1.0);
+    const H = Math.ceil(ts * 1.15);
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const c2 = cv.getContext("2d")!;
+
+    const cx = W / 2;
+    const headR = ts * 0.16;
+    const headCy = H * 0.36;
+    const bodyTop = headCy + headR * 0.55;
+    const bodyW = ts * 0.46;
+    const bodyH = ts * 0.50;
+
+    const seed = this.hashId(c.id);
+    const rng = this.makeRng(seed);
+
+    // Skin tone (varied)
+    const skinPool = ["#F2C9A0", "#E8B58F", "#D49978", "#B57A55", "#8B5A3C", "#6E4530"];
+    const skin = skinPool[Math.floor(rng() * skinPool.length)];
+
+    // Hair color (natural, gray for elder)
+    const hairPool = ["#1a1a1a", "#3a2418", "#5a3a1f", "#a0762f", "#d6b06b", "#7d4425"];
+    let hair = hairPool[Math.floor(rng() * hairPool.length)];
+    if (stage === "elder") hair = rng() < 0.5 ? "#d4d4d8" : "#f4f4f5";
+
+    // Tunic palette by social tier
+    const tunic = this.getTunicPalette(c.socialTier, rng);
+
+    // ---- Body (gradient + texture overlay) ----
+    const grad = c2.createLinearGradient(0, bodyTop, 0, bodyTop + bodyH);
+    grad.addColorStop(0, tunic.top);
+    grad.addColorStop(1, tunic.bottom);
+    c2.fillStyle = grad;
+    this.roundRect(c2, cx - bodyW / 2, bodyTop, bodyW, bodyH, ts * 0.07);
+    c2.fill();
+
+    // Linen/wool weave overlay
+    c2.save();
+    this.roundRect(c2, cx - bodyW / 2, bodyTop, bodyW, bodyH, ts * 0.07);
+    c2.clip();
+    c2.strokeStyle = "rgba(0,0,0,0.10)";
+    c2.lineWidth = 0.5;
+    for (let yy = bodyTop + 2; yy < bodyTop + bodyH; yy += 2.2) {
+      c2.beginPath(); c2.moveTo(cx - bodyW / 2, yy); c2.lineTo(cx + bodyW / 2, yy); c2.stroke();
+    }
+    // Class-specific accents
+    if (c.socialTier === "noble") {
+      c2.fillStyle = "rgba(255,215,0,0.45)";
+      c2.fillRect(cx - bodyW * 0.08, bodyTop, bodyW * 0.16, bodyH);
+    }
+    if (c.socialTier === "king") {
+      // Ermine spots along hem
+      c2.fillStyle = "rgba(245,245,245,0.95)";
+      for (let i = 0; i < 4; i++) {
+        const x = cx - bodyW * 0.32 + i * bodyW * 0.22;
+        c2.fillRect(x, bodyTop + bodyH * 0.85, 3, 4);
+      }
+    }
+    c2.restore();
+
+    // Body outline
+    this.roundRect(c2, cx - bodyW / 2, bodyTop, bodyW, bodyH, ts * 0.07);
+    c2.strokeStyle = "rgba(0,0,0,0.5)";
+    c2.lineWidth = Math.max(1, ts * 0.022);
+    c2.stroke();
+
+    // ---- Head ----
+    c2.fillStyle = skin;
+    c2.beginPath(); c2.arc(cx, headCy, headR, 0, Math.PI * 2); c2.fill();
+    c2.strokeStyle = "rgba(0,0,0,0.55)";
+    c2.lineWidth = Math.max(1, ts * 0.022);
+    c2.stroke();
+
+    // Hair
+    const hairStyle = Math.floor(rng() * 5);
+    this.drawHair(c2, cx, headCy, headR, hair, hairStyle);
+
+    // Beard (males, 55% chance)
+    if (c.sex === "male" && rng() < 0.55) {
+      const beardStyle = Math.floor(rng() * 3);
+      this.drawBeard(c2, cx, headCy, headR, hair, beardStyle, stage);
+    }
+
+    // Eyes (two tiny dots)
+    c2.fillStyle = "rgba(0,0,0,0.75)";
+    c2.beginPath(); c2.arc(cx - headR * 0.32, headCy + headR * 0.05, Math.max(0.8, ts * 0.018), 0, Math.PI * 2); c2.fill();
+    c2.beginPath(); c2.arc(cx + headR * 0.32, headCy + headR * 0.05, Math.max(0.8, ts * 0.018), 0, Math.PI * 2); c2.fill();
+
+    // ---- Trait markers ----
+    if (c.trait === "Zealot") {
+      // Cross necklace at neckline
+      const cyN = bodyTop + ts * 0.05;
+      c2.strokeStyle = "#d4af37";
+      c2.lineWidth = Math.max(1.2, ts * 0.028);
+      c2.beginPath(); c2.moveTo(cx, cyN - ts * 0.03); c2.lineTo(cx, cyN + ts * 0.06); c2.stroke();
+      c2.beginPath(); c2.moveTo(cx - ts * 0.035, cyN + ts * 0.005); c2.lineTo(cx + ts * 0.035, cyN + ts * 0.005); c2.stroke();
+    }
+    if (c.trait === "Greedy") {
+      // Coin pouch on belt (right hip)
+      const beltY = bodyTop + bodyH * 0.62;
+      c2.fillStyle = "#6b4f12";
+      c2.beginPath(); c2.arc(cx + bodyW * 0.42, beltY, ts * 0.07, 0, Math.PI * 2); c2.fill();
+      c2.fillStyle = "#d4af37";
+      c2.beginPath(); c2.arc(cx + bodyW * 0.42, beltY, ts * 0.025, 0, Math.PI * 2); c2.fill();
+      c2.strokeStyle = "rgba(0,0,0,0.5)"; c2.lineWidth = 1; c2.stroke();
+    }
+
+    // ---- Profession accessory ----
+    this.drawAccessory(c2, c, cx, bodyTop, bodyW, bodyH, ts);
+
+    // ---- Master ring (skill ≥ 3): gold pendant on chest ----
+    if (master && !c.trait) {
+      // skip if trait pendant already there
+    }
+    if (master) {
+      c2.fillStyle = "#ffd84a";
+      c2.beginPath(); c2.arc(cx + bodyW * 0.18, bodyTop + ts * 0.06, ts * 0.035, 0, Math.PI * 2); c2.fill();
+      c2.strokeStyle = "rgba(120,80,0,0.85)"; c2.lineWidth = 1; c2.stroke();
+    }
+
+    // ---- Royal crown ----
+    if (c.isKing) {
+      this.drawCrown(c2, cx, headCy, headR, ts, false);
+    } else if (c.isQueen || c.isDowagerQueen) {
+      this.drawCrown(c2, cx, headCy, headR, ts, true);
+    }
+
+    return cv;
+  }
+
   /**
    * Phase 3 / 4: Draw all citizens within the visible tile bounds as
    * humanoid sprites (pre-rendered head+body buffer + live-drawn legs).
@@ -662,8 +1340,6 @@ export class GameEngine {
     const ts = this.state.grid.tileSize;
     const cam = this.state.camera;
     if (this.state.citizens.length === 0) return;
-
-    this.ensureNpcSprites();
 
     // Sub-second pulse for halo / rogue shimmer / leg gait
     const t = performance.now() / 1000;
@@ -726,8 +1402,8 @@ export class GameEngine {
         ctx.fill();
       }
 
-      // Pick the buffer for this NPC's tier
-      const sprite = this.npcSprites.get(c.socialTier) ?? this.npcSprites.get("peasant")!;
+      // Phase 10: per-NPC composite sprite (cached by visual signature)
+      const sprite = this.getCompositeSprite(c);
       const sw = sprite.width;
       const sh = sprite.height;
       // Anchor: feet centered at (cx, cy + ts*0.32). Sprite origin top-left.
@@ -735,15 +1411,18 @@ export class GameEngine {
       const dy = cy + ts * 0.32 - sh;
 
       const isMoving =
-        c.state === "MOVING" || c.state === "SEEK_FOOD" || c.state === "ROGUE";
+        c.state === "MOVING" || c.state === "SEEK_FOOD" || c.state === "ROGUE" || c.state === "FLEEING";
       const isDead = c.state === "DEAD";
 
       // Phase 6: life-stage scale — children draw at 65%, elders at 90%,
-      // adults full size. Anchor at the feet (cx, cy + ts*0.32).
+      // adults full size. Phase 10: Coward NPCs draw 12% smaller for visible
+      // diversity. Anchor at feet (cx, cy + ts*0.32).
       const lifeStage = getLifeStage(c, this.state.time.gameYear);
-      const lifeScale =
+      const cowardScale = c.trait === "Coward" ? 0.88 : 1;
+      const baseScale =
         lifeStage === "child" ? 0.65 :
         lifeStage === "elder" ? 0.9 : 1;
+      const lifeScale = baseScale * cowardScale;
       if (lifeScale !== 1) {
         ctx.save();
         const anchorY = cy + ts * 0.32;
@@ -752,11 +1431,28 @@ export class GameEngine {
         ctx.translate(-cx, -anchorY);
       }
 
+      // Phase 10: smoky heresy aura for ROGUE / REBEL (dark, floating particles)
+      if (c.state === "ROGUE") {
+        for (let i = 0; i < 3; i++) {
+          const phase = t * 1.4 + c.hue + i * 2;
+          const ax = cx + Math.sin(phase) * ts * 0.18;
+          const ay = cy - ts * 0.05 + Math.cos(phase * 0.8) * ts * 0.10 - i * ts * 0.06;
+          const ar = ts * (0.10 + 0.04 * Math.sin(phase * 1.7));
+          const grad = ctx.createRadialGradient(ax, ay, 0, ax, ay, ar);
+          grad.addColorStop(0, "rgba(40,10,40,0.45)");
+          grad.addColorStop(1, "rgba(40,10,40,0)");
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(ax, ay, ar, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
       // Leg color matches body for cohesion
       const legColor =
-        c.socialTier === "peasant" ? "#6E5440" :
-        c.socialTier === "noble"   ? "#5A1B95" :
-                                     "#5A1B95";
+        c.socialTier === "king"   ? "#3d0508" :
+        c.socialTier === "noble"  ? "#3a1f5e" :
+                                    "#3f3424";
       const legW = ts * 0.10;
       const legH = ts * 0.14;
       const legY = cy + ts * 0.18;
@@ -1231,9 +1927,25 @@ export class GameEngine {
 
     ctx.restore();
 
-    // Phase 6: night overlay — dark blue tint over the whole world.
+    // Phase 6/10: Dramatic cool-blue night overlay — multiply tint plus a
+    // subtle vignette that's darker at the edges for cinematic depth.
     if (this.state.dayNight === "night") {
-      ctx.fillStyle = "rgba(10, 14, 38, 0.45)";
+      ctx.save();
+      ctx.globalCompositeOperation = "multiply";
+      ctx.fillStyle = "rgb(70, 95, 160)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+      // Cool tint pass
+      ctx.fillStyle = "rgba(12, 20, 56, 0.32)";
+      ctx.fillRect(0, 0, W, H);
+      // Edge darkening
+      const nv = ctx.createRadialGradient(
+        W / 2, H / 2, Math.min(W, H) * 0.30,
+        W / 2, H / 2, Math.max(W, H) * 0.75
+      );
+      nv.addColorStop(0, "rgba(0,0,0,0)");
+      nv.addColorStop(1, "rgba(0,10,30,0.45)");
+      ctx.fillStyle = nv;
       ctx.fillRect(0, 0, W, H);
     }
 
