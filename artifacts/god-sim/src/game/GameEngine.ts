@@ -572,14 +572,23 @@ export class GameEngine {
     const headCy = H * 0.36;
     const bodyTop = headCy + headR * 0.6;
 
-    const bodyColor =
-      tier === "peasant" ? "#A18262" :        // Mud/Brown Tunic
-      tier === "noble"   ? "#8A2BE2" :        // Royal Purple
-                           "#8A2BE2";         // King uses Noble base
+    // Phase 7: Procedural gradients on the tunic — top is the rich hue,
+    // bottom is a darker shade to fake directional lighting.
+    const bodyTopColor =
+      tier === "peasant" ? "#B8956F" :        // Warm tan top
+      tier === "noble"   ? "#A044F5" :        // Bright royal purple
+                           "#A044F5";         // King shares noble base
+    const bodyBotColor =
+      tier === "peasant" ? "#6E5440" :        // Deep mud shadow
+      tier === "noble"   ? "#5A1B95" :        // Plum shadow
+                           "#5A1B95";
+    const grad = c.createLinearGradient(0, bodyTop, 0, bodyTop + bodyH);
+    grad.addColorStop(0, bodyTopColor);
+    grad.addColorStop(1, bodyBotColor);
     const headColor = "#F2C9A0";              // Skin tone (shared)
 
     // Body rectangle (rounded shoulders for polish)
-    c.fillStyle = bodyColor;
+    c.fillStyle = grad;
     c.beginPath();
     const r = ts * 0.06;
     c.moveTo(cx - bodyW / 2 + r, bodyTop);
