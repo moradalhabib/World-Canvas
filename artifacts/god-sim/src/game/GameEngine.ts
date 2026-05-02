@@ -7,7 +7,6 @@ import {
   applyOfflineProgression,
 } from "./storage";
 
-const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4.0;
 const SAVE_INTERVAL_MS = 10_000;
 const MONTHS_PER_REAL_MS_AT_1X = 1 / 60_000;
@@ -75,14 +74,29 @@ export class GameEngine {
   private get worldW() { return this.state.grid.cols * this.state.grid.tileSize; }
   private get worldH() { return this.state.grid.rows * this.state.grid.tileSize; }
 
+  private get minZoom(): number {
+    if (this.viewW === 0 || this.viewH === 0) return 0.05;
+    return Math.min(this.viewW / this.worldW, this.viewH / this.worldH);
+  }
+
   private clampCamera() {
     const cam = this.state.camera;
+    cam.zoom = Math.max(this.minZoom, Math.min(MAX_ZOOM, cam.zoom));
+
     const scaledViewW = this.viewW / cam.zoom;
     const scaledViewH = this.viewH / cam.zoom;
-    const maxX = Math.max(0, this.worldW - scaledViewW);
-    const maxY = Math.max(0, this.worldH - scaledViewH);
-    cam.x = Math.max(0, Math.min(cam.x, maxX));
-    cam.y = Math.max(0, Math.min(cam.y, maxY));
+
+    if (scaledViewW >= this.worldW) {
+      cam.x = -(scaledViewW - this.worldW) / 2;
+    } else {
+      cam.x = Math.max(0, Math.min(cam.x, this.worldW - scaledViewW));
+    }
+
+    if (scaledViewH >= this.worldH) {
+      cam.y = -(scaledViewH - this.worldH) / 2;
+    } else {
+      cam.y = Math.max(0, Math.min(cam.y, this.worldH - scaledViewH));
+    }
   }
 
   private bindTouchEvents() {
@@ -214,7 +228,7 @@ export class GameEngine {
 
   private applyZoom(factor: number, worldFocusX: number, worldFocusY: number) {
     const cam = this.state.camera;
-    const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, cam.zoom * factor));
+    const newZoom = Math.max(this.minZoom, Math.min(MAX_ZOOM, cam.zoom * factor));
     cam.x = worldFocusX - (worldFocusX - cam.x) * (cam.zoom / newZoom);
     cam.y = worldFocusY - (worldFocusY - cam.y) * (cam.zoom / newZoom);
     cam.zoom = newZoom;
