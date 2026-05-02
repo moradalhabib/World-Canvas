@@ -29,8 +29,15 @@ const FAITH_PRAY_THRESHOLD = 50;
 const CRISIS_DEATH_TIMER = 2; // months in PRAYING/ROGUE before dying
 const ROGUE_STEAL_AMOUNT = 30; // gold removed from treasury when a thief succeeds
 const TILES_PER_SECOND_AT_1X = 1.5;
+const ELDER_SPEED_MULTIPLIER = 0.7; // Phase 6: -30% movement for elders
 const GRAVESTONE_PROXIMITY_RADIUS = 2; // tiles
 const GRAVESTONE_SOCIAL_PENALTY = 0.5; // applied per tile-snap when near a grave
+
+/* Phase 6: Sleep & Safety */
+const HOMELESS_SAFETY_PENALTY = 35;       // safety lost when sleeping outside
+const SAFETY_RECOVERY_PER_NIGHT = 8;      // recovered when sleeping safely indoors
+const LOW_SAFETY_REBEL_THRESHOLD = 25;    // below this, ROGUE becomes REBEL during civil war
+const ASSASSINATION_RADIUS = 1;           // tiles — rebels at this range can kill the King
 
 /* -------------------------------------------------------------------------- */
 /*  Spawning & creation                                                       */
@@ -138,6 +145,9 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
     if (c.sex !== "male" && c.sex !== "female") c.sex = pickSex();
     if (typeof c.name !== "string" || c.name.length === 0) c.name = pickName(c.sex);
     if (typeof c.birthYear !== "number") c.birthYear = 1;
+    // Phase 6 backfill
+    if (typeof c.safety !== "number") c.safety = 100;
+    if (typeof c.vanity !== "number") c.vanity = 0;
     // Legacy state values that no longer exist map to IDLE
     const validStates = new Set([
       "IDLE",
@@ -148,6 +158,8 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
       "DEAD",
       "WORKING",
       "MINISTERING",
+      "SLEEPING",
+      "REBEL",
     ]);
     if (!validStates.has(c.state as string)) c.state = "IDLE";
   }
