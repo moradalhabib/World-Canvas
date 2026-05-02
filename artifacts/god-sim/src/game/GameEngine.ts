@@ -34,6 +34,44 @@ const COMBAT_DURATION_MS = 900;
 const SPARK_LIFE_MS = 450;
 const SPARKS_PER_FRAME = 1;
 
+/* ---------- Phase 13: True 2:1 dimetric isometric projection ----------
+ * Standard "Age of Empires" iso: each tile is a diamond `ts` wide and
+ * `ts/2` tall. World coords (col, row) project to iso pixel (sx, sy):
+ *   sx = (col - row) * ts/2   + xOffset
+ *   sy = (col + row) * ts/4   + yOffset
+ * The xOffset shifts the leftmost tile (col=0, row=rows-1) so its diamond
+ * left point lands at sx=0. The yOffset reserves the top half-diamond.
+ *
+ * Inverse (used for mouse picking):
+ *   col - row = 2*(sx - xOffset)/ts
+ *   col + row = 4*(sy - yOffset)/ts
+ * → col = (sy - yOffset) * 2/ts + (sx - xOffset)/ts
+ * → row = (sy - yOffset) * 2/ts - (sx - xOffset)/ts
+ */
+function isoXOffset(rows: number, ts: number): number {
+  return (rows - 1) * ts / 2 + ts / 2;
+}
+function isoYOffset(ts: number): number {
+  return ts / 4;
+}
+function worldToIso(col: number, row: number, ts: number, rows: number): { sx: number; sy: number } {
+  return {
+    sx: (col - row) * ts / 2 + isoXOffset(rows, ts),
+    sy: (col + row) * ts / 4 + isoYOffset(ts),
+  };
+}
+function isoToWorld(sx: number, sy: number, ts: number, rows: number): { col: number; row: number } {
+  const px = sx - isoXOffset(rows, ts);
+  const py = sy - isoYOffset(ts);
+  return {
+    col: py * 2 / ts + px / ts,
+    row: py * 2 / ts - px / ts,
+  };
+}
+function isoWorldBounds(cols: number, rows: number, ts: number): { w: number; h: number } {
+  return { w: (cols + rows) * ts / 2, h: (cols + rows) * ts / 4 };
+}
+
 /* Phase 5: Divine power tunables */
 const LIGHTNING_LIFE_MS = 420;
 const FIRE_LIFE_MS = 850;
@@ -172,6 +210,10 @@ export class GameEngine {
    */
   private terrainLayer: HTMLCanvasElement | null = null;
   private terrainLayerScale = 0.5; // half-scale → 100*64*0.5 = 3200px max edge
+  // Phase 13: Set true when a tile changes (architect, meteor) so render()
+  // triggers a full iso terrain rebuild on the next frame instead of trying
+  // to do a tricky incremental patch on overlapping diamond tiles.
+  private terrainDirty = false;
 
   /**
    * Phase 10.5: FPS counter. EMA over recent frame times; surfaced through
@@ -247,8 +289,11 @@ export class GameEngine {
     if (this.state.camera.x === 0 && this.state.camera.y === 0 && this.state.camera.zoom === 1) {
       const grid = this.state.grid;
       const founded = this.state.civilization.founded;
-      const focusX = founded.col * grid.tileSize + grid.tileSize / 2;
-      const focusY = founded.row * grid.tileSize + grid.tileSize / 2;
+      // Phase 13: focus camera on the iso projection of the founding tile,
+      // not its top-down rect center, so the iso terrain centers correctly.
+      const f = worldToIso(founded.col, founded.row, grid.tileSize, grid.rows);
+      const focusX = f.sx;
+      const focusY = f.sy;
       // Pick a comfortable mid-range zoom that shows ~10 tiles across so
       // NPCs are clearly visible at default. (Was /20 — sprites were tiny in
       // the 606px-wide canvas iframe; halving the tile-count doubles the
@@ -631,44 +676,37 @@ export class GameEngine {
    *   - Service: circular icon
    * High-tier homes get a small golden "wealth" indicator.
    */
-  private renderBuildings(
-    startRow: number,
-    endRow: number,
-    startCol: number,
-    endCol: number
-  ) {
+  /**
+   * Phase 13: Render ONE building at its iso-projected position. Called
+   * from the depth-sorted scene queue in render(). The (sx, sy) is the
+   * iso center of the building's tile. We anchor the existing building
+   * draw routine so the building's wall base sits inside the lower half
+   * of the diamond — visually "standing on" the tile rather than floating.
+   *
+   *   x = sx - ts/2     (building square left edge = tile diamond left)
+   *   y = sy - ts*0.6   (so the wall base ~ sy + ts*0.1, slightly below
+   *                      tile center, hugging the lower diamond half)
+   */
+  private drawSingleBuilding(b: Building, sx: number, sy: number, ts: number) {
     const ctx = this.ctx;
-    const ts = this.state.grid.tileSize;
     const cam = this.state.camera;
-    if (this.state.buildings.length === 0) return;
-
-    for (const b of this.state.buildings) {
-      if (b.row < startRow || b.row > endRow) continue;
-      if (b.col < startCol || b.col > endCol) continue;
-      const x = b.col * ts;
-      const y = b.row * ts;
-      // Phase 5: rubble draws a broken pile instead of the normal building.
-      if (b.status === "rubble") {
-        this.drawRubble(x, y, ts);
-        continue;
-      }
-      const def = getBuildingDef(b.typeId);
-      this.drawBuilding(b, def, x, y, ts);
+    const x = sx - ts * 0.5;
+    const y = sy - ts * 0.6;
+    if (b.status === "rubble") {
+      this.drawRubble(x, y, ts);
+      return;
     }
-
-    // Show building glyphs only when zoomed in enough to read them
+    const def = getBuildingDef(b.typeId);
+    this.drawBuilding(b, def, x, y, ts);
+    // Glyph painted right after its building so any later (more in-front)
+    // building draw can occlude it. Anchor at iso tile center so glyphs
+    // line up consistently across building types.
     if (cam.zoom > 0.7) {
       ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
       ctx.font = `bold ${Math.round(ts * 0.32)}px -apple-system, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      for (const b of this.state.buildings) {
-        if (b.row < startRow || b.row > endRow) continue;
-        if (b.col < startCol || b.col > endCol) continue;
-        if (b.status === "rubble") continue;
-        const def = getBuildingDef(b.typeId);
-        ctx.fillText(def.glyph, b.col * ts + ts * 0.5, b.row * ts + ts * 0.62);
-      }
+      ctx.fillText(def.glyph, sx, sy);
     }
   }
 
@@ -1380,38 +1418,41 @@ export class GameEngine {
   }
 
   /**
-   * Phase 3 / 4: Draw all citizens within the visible tile bounds as
-   * humanoid sprites (pre-rendered head+body buffer + live-drawn legs).
-   * State icons (halo, rogue ring, dead rotation) are layered on top.
+   * Phase 13: Render ONE citizen at its iso-projected position. Called
+   * from the depth-sorted scene queue in render(). The (sx, sy) is the
+   * iso center of the tile the citizen currently stands on. The body cy
+   * is offset upward by ts*0.32 so the foot anchor (cy + ts*0.32) lands
+   * exactly at the tile's iso center — the citizen "stands on" the tile.
+   *
+   * The Phase 12 walk cycle (8-dir facing, sine bob, opposite-arm swing)
+   * is preserved verbatim — it's purely a function of (cx, cy) anchor
+   * and is independent of whether the world is top-down or iso.
    */
-  private renderCitizens(
-    startRow: number,
-    endRow: number,
-    startCol: number,
-    endCol: number
+  private drawSingleCitizen(
+    c: Citizen,
+    pos: { row: number; col: number },
+    sx: number,
+    sy: number,
+    t: number,
+    ts: number,
   ) {
     const ctx = this.ctx;
-    const ts = this.state.grid.tileSize;
     const cam = this.state.camera;
-    if (this.state.citizens.length === 0) return;
 
-    // Sub-second pulse for halo / rogue shimmer / leg gait
-    const t = performance.now() / 1000;
     const radius = ts * 0.18; // legacy radius — kept for path-line spacing
 
-    for (const c of this.state.citizens) {
-      const pos = getCitizenVisualPos(c);
-      // Cull off-screen (with 1-tile margin so we don't pop in/out at edges)
-      if (pos.row < startRow - 1 || pos.row > endRow + 1) continue;
-      if (pos.col < startCol - 1 || pos.col > endCol + 1) continue;
-
-      const cx = pos.col * ts + ts * 0.5;
-      const cy = pos.row * ts + ts * 0.5;
+    {
+      const cx = sx;
+      const cy = sy - ts * 0.32;
 
       /* ---------- Pathfinding hint lines (drawn under sprite) ---------- */
       if (c.state === "SEEK_FOOD" && c.targetTile && cam.zoom > 0.6) {
-        const tx = c.targetTile.col * ts + ts * 0.5;
-        const ty = c.targetTile.row * ts + ts * 0.5;
+        // Phase 13: project target tile through iso so the dashed hint
+        // line connects feet-to-feet across the iso world, not into a
+        // stale top-down pixel position.
+        const tIso = worldToIso(c.targetTile.col, c.targetTile.row, ts, this.state.grid.rows);
+        const tx = tIso.sx;
+        const ty = tIso.sy - ts * 0.32;
         ctx.strokeStyle = "rgba(255, 220, 80, 0.55)";
         ctx.lineWidth = Math.max(1, 1.5 / cam.zoom);
         ctx.setLineDash([ts * 0.12, ts * 0.08]);
@@ -1422,8 +1463,9 @@ export class GameEngine {
         ctx.setLineDash([]);
       }
       if (c.state === "ROGUE" && c.targetTile && cam.zoom > 0.6) {
-        const tx = c.targetTile.col * ts + ts * 0.5;
-        const ty = c.targetTile.row * ts + ts * 0.5;
+        const tIso = worldToIso(c.targetTile.col, c.targetTile.row, ts, this.state.grid.rows);
+        const tx = tIso.sx;
+        const ty = tIso.sy - ts * 0.32;
         ctx.strokeStyle = "rgba(255, 60, 60, 0.7)";
         ctx.lineWidth = Math.max(1, 1.8 / cam.zoom);
         ctx.setLineDash([ts * 0.10, ts * 0.06]);
@@ -1530,7 +1572,7 @@ export class GameEngine {
         ctx.fillRect(cx + ts * 0.01, legY, legW, legH);
         ctx.restore();
         if (lifeScale !== 1) ctx.restore();
-        continue;
+        return; // Phase 13: per-citizen call — early-exit instead of `continue`.
       }
 
       /* ---------- Phase 12: 8-directional facing + walk cycle ----------
@@ -1666,8 +1708,16 @@ export class GameEngine {
 
   private get viewW() { return this.canvas.width / window.devicePixelRatio; }
   private get viewH() { return this.canvas.height / window.devicePixelRatio; }
-  private get worldW() { return this.state.grid.cols * this.state.grid.tileSize; }
-  private get worldH() { return this.state.grid.rows * this.state.grid.tileSize; }
+  // Phase 13: World bounds are the iso bounding box, NOT the top-down
+  // grid rect. The bounding box is (cols+rows) tiles diagonally across.
+  private get worldW() {
+    const g = this.state.grid;
+    return (g.cols + g.rows) * g.tileSize / 2;
+  }
+  private get worldH() {
+    const g = this.state.grid;
+    return (g.cols + g.rows) * g.tileSize / 4;
+  }
 
   private get minZoom(): number {
     if (this.viewW === 0 || this.viewH === 0) return 0.05;
@@ -2109,56 +2159,41 @@ export class GameEngine {
     const grid = this.state.grid;
     const ts = grid.tileSize;
     const s = this.terrainLayerScale;
-    const W = Math.ceil(grid.cols * ts * s);
-    const H = Math.ceil(grid.rows * ts * s);
+    // Phase 13: iso bounding box (not top-down rect). For a 100×100 grid
+    // this is ~6400px wide × 3200px tall at full-res; half-scale keeps it
+    // around 3200×1600 = ~20MB in memory — well within mobile limits.
+    const bounds = isoWorldBounds(grid.cols, grid.rows, ts);
+    const W = Math.ceil(bounds.w * s);
+    const H = Math.ceil(bounds.h * s);
     const cv = document.createElement("canvas");
     cv.width = W; cv.height = H;
     const g = cv.getContext("2d")!;
     g.imageSmoothingEnabled = true;
-    // Render at scaled tile size; biome patterns repeat seamlessly so a
-    // smaller tile rect just samples a smaller portion of the same pattern.
     g.scale(s, s);
-    const ew = Math.max(2, ts * 0.18);
+    // Draw each tile as a 2:1 dimetric diamond centered at its iso
+    // projected position. Iterating row-major then col-major gives a
+    // valid back-to-front order for tiles (no two tile diamonds overlap).
     for (let r = 0; r < grid.rows; r++) {
       for (let c = 0; c < grid.cols; c++) {
         const tile = grid.tiles[r][c];
-        const px = c * ts;
-        const py = r * ts;
+        const { sx, sy } = worldToIso(c, r, ts, grid.rows);
+        g.save();
+        g.translate(sx, sy);
+        g.beginPath();
+        g.moveTo(0, -ts / 4);   // top
+        g.lineTo(ts / 2, 0);    // right
+        g.lineTo(0, ts / 4);    // bottom
+        g.lineTo(-ts / 2, 0);   // left
+        g.closePath();
         const pat = this.biomePatterns.get(tile.type);
-        if (pat) {
-          g.fillStyle = pat;
-          g.save();
-          g.translate(px, py);
-          g.fillRect(0, 0, ts, ts);
-          g.restore();
-        } else {
-          g.fillStyle = TILE_COLORS[tile.type];
-          g.fillRect(px, py, ts, ts);
-        }
-      }
-    }
-    // Transitions in a second pass so neighbour reads see final tile types.
-    for (let r = 0; r < grid.rows; r++) {
-      for (let c = 0; c < grid.cols; c++) {
-        const tile = grid.tiles[r][c];
-        const px = c * ts;
-        const py = r * ts;
-        if (r > 0) {
-          const tc = getTransitionColor(tile.type, grid.tiles[r - 1][c].type);
-          if (tc) g.drawImage(this.getTransitionStrip(tc, "t"), px, py);
-        }
-        if (r < grid.rows - 1) {
-          const tc = getTransitionColor(tile.type, grid.tiles[r + 1][c].type);
-          if (tc) g.drawImage(this.getTransitionStrip(tc, "b"), px, py + ts - ew);
-        }
-        if (c > 0) {
-          const tc = getTransitionColor(tile.type, grid.tiles[r][c - 1].type);
-          if (tc) g.drawImage(this.getTransitionStrip(tc, "l"), px, py);
-        }
-        if (c < grid.cols - 1) {
-          const tc = getTransitionColor(tile.type, grid.tiles[r][c + 1].type);
-          if (tc) g.drawImage(this.getTransitionStrip(tc, "r"), px + ts - ew, py);
-        }
+        g.fillStyle = pat || TILE_COLORS[tile.type];
+        g.fill();
+        // Subtle dark edge to give every tile a visible boundary, like
+        // the etched lines you see in classic dimetric strategy games.
+        g.strokeStyle = "rgba(0, 0, 0, 0.18)";
+        g.lineWidth = 0.75;
+        g.stroke();
+        g.restore();
       }
     }
     this.terrainLayer = cv;
@@ -2169,55 +2204,14 @@ export class GameEngine {
    * (so transition strips on both sides of the painted tile stay correct).
    * Avoids the cost of a full rebuild during architect-mode painting.
    */
-  private redrawTerrainTile(row: number, col: number) {
-    if (!this.terrainLayer) return;
-    const grid = this.state.grid;
-    const ts = grid.tileSize;
-    const g = this.terrainLayer.getContext("2d")!;
-    const s = this.terrainLayerScale;
-    const ew = Math.max(2, ts * 0.18);
-    g.save();
-    g.scale(s, s);
-
-    const tilesToRedraw: Array<[number, number]> = [
-      [row, col],
-      [row - 1, col], [row + 1, col],
-      [row, col - 1], [row, col + 1],
-    ];
-    for (const [r, c] of tilesToRedraw) {
-      if (r < 0 || c < 0 || r >= grid.rows || c >= grid.cols) continue;
-      const tile = grid.tiles[r][c];
-      const px = c * ts;
-      const py = r * ts;
-      // Clear (in scaled space) and re-fill base
-      g.clearRect(px, py, ts, ts);
-      const pat = this.biomePatterns.get(tile.type);
-      if (pat) {
-        g.fillStyle = pat;
-        g.save(); g.translate(px, py); g.fillRect(0, 0, ts, ts); g.restore();
-      } else {
-        g.fillStyle = TILE_COLORS[tile.type];
-        g.fillRect(px, py, ts, ts);
-      }
-      // Transitions for this tile
-      if (r > 0) {
-        const tc = getTransitionColor(tile.type, grid.tiles[r - 1][c].type);
-        if (tc) g.drawImage(this.getTransitionStrip(tc, "t"), px, py);
-      }
-      if (r < grid.rows - 1) {
-        const tc = getTransitionColor(tile.type, grid.tiles[r + 1][c].type);
-        if (tc) g.drawImage(this.getTransitionStrip(tc, "b"), px, py + ts - ew);
-      }
-      if (c > 0) {
-        const tc = getTransitionColor(tile.type, grid.tiles[r][c - 1].type);
-        if (tc) g.drawImage(this.getTransitionStrip(tc, "l"), px, py);
-      }
-      if (c < grid.cols - 1) {
-        const tc = getTransitionColor(tile.type, grid.tiles[r][c + 1].type);
-        if (tc) g.drawImage(this.getTransitionStrip(tc, "r"), px + ts - ew, py);
-      }
-    }
-    g.restore();
+  private redrawTerrainTile(_row: number, _col: number) {
+    // Phase 13: iso diamond tiles overlap their bounding rects, so an
+    // incremental "patch this tile + its 4 neighbors" is risky (you can
+    // erase parts of unrelated tiles). Instead, mark dirty and let
+    // render() trigger one full rebuild on the next frame. Architect
+    // brush strokes and meteor strikes are both rare enough that paying
+    // ~30ms once is cheaper than any incremental scheme.
+    this.terrainDirty = true;
   }
 
   /**
@@ -2315,86 +2309,77 @@ export class GameEngine {
     ctx.scale(cam.zoom, cam.zoom);
     ctx.translate(-cam.x, -cam.y);
 
-    const startCol = Math.max(0, Math.floor(cam.x / ts));
-    const endCol = Math.min(
-      grid.cols - 1,
-      Math.ceil((cam.x + W / cam.zoom) / ts)
-    );
-    const startRow = Math.max(0, Math.floor(cam.y / ts));
-    const endRow = Math.min(
-      grid.rows - 1,
-      Math.ceil((cam.y + H / cam.zoom) / ts)
-    );
-
-    const useTextures = cam.zoom > 0.35;
-
-    // Phase 10.5: Static terrain layer. Build lazily on first frame, then
-    // blit a single image per frame instead of looping every visible tile.
-    // The layer holds base tiles + biome transitions at half-scale; the
-    // browser scales it back up via image smoothing so it stays crisp at
-    // typical zoom levels and gets only slightly soft when zoomed in past
-    // 1.5×, which actually helps mask tile seams.
+    // Phase 13: TRUE 2:1 DIMETRIC ISOMETRIC RENDER
+    //
+    // 1) Terrain — pre-rendered iso diamond layer, blitted as a single
+    //    image. We rebuild on first frame and whenever a tile mutation
+    //    set the dirty flag (architect brush, meteor blast).
+    // 2) Entities — buildings + citizens are interleaved in a single
+    //    depth-sorted queue keyed by (row + col) so a citizen on a tile
+    //    "in front" of a building draws over its wall, while one on a
+    //    tile "behind" the building gets occluded. Citizens get a +0.01
+    //    epsilon so on the SAME tile as a building they draw on top.
+    if (this.terrainDirty) {
+      this.rebuildTerrainLayer();
+      this.terrainDirty = false;
+    }
     if (!this.terrainLayer) this.rebuildTerrainLayer();
 
-    if (useTextures && this.terrainLayer) {
+    if (this.terrainLayer) {
       const layerScale = this.terrainLayerScale;
-      const sx = Math.max(0, startCol * ts * layerScale);
-      const sy = Math.max(0, startRow * ts * layerScale);
-      const sw = Math.min(
-        this.terrainLayer.width - sx,
-        (endCol - startCol + 1) * ts * layerScale
-      );
-      const sh = Math.min(
-        this.terrainLayer.height - sy,
-        (endRow - startRow + 1) * ts * layerScale
-      );
-      const dx = startCol * ts;
-      const dy = startRow * ts;
-      const dw = (endCol - startCol + 1) * ts;
-      const dh = (endRow - startRow + 1) * ts;
-      ctx.drawImage(this.terrainLayer, sx, sy, sw, sh, dx, dy, dw, dh);
-    } else {
-      // Low-zoom fallback: solid color fills only (no patterns / transitions)
-      for (let r = startRow; r <= endRow; r++) {
-        for (let c = startCol; c <= endCol; c++) {
-          const tile = grid.tiles[r][c];
-          ctx.fillStyle = TILE_COLORS[tile.type];
-          ctx.fillRect(c * ts, r * ts, ts, ts);
-        }
+      const visW = W / cam.zoom;
+      const visH = H / cam.zoom;
+      // Source rect = visible camera viewport mapped into terrain image
+      // pixel coords (clamped so we never read outside the image).
+      const srcX = Math.max(0, cam.x * layerScale);
+      const srcY = Math.max(0, cam.y * layerScale);
+      const srcW = Math.min(this.terrainLayer.width - srcX, visW * layerScale);
+      const srcH = Math.min(this.terrainLayer.height - srcY, visH * layerScale);
+      const dstX = Math.max(cam.x, 0);
+      const dstY = Math.max(cam.y, 0);
+      const dstW = srcW / layerScale;
+      const dstH = srcH / layerScale;
+      if (srcW > 0 && srcH > 0) {
+        ctx.drawImage(this.terrainLayer, srcX, srcY, srcW, srcH, dstX, dstY, dstW, dstH);
       }
     }
 
-    // Pass 3: water bloom highlight
-    if (this.waterHighlight && cam.zoom > 0.5) {
-      ctx.globalCompositeOperation = "lighter";
-      for (let r = startRow; r <= endRow; r++) {
-        for (let c = startCol; c <= endCol; c++) {
-          if (grid.tiles[r][c].type !== "water") continue;
-          ctx.drawImage(this.waterHighlight, c * ts, r * ts);
-        }
-      }
-      ctx.globalCompositeOperation = "source-over";
+    // Build the depth-sorted entity queue. Cull anything whose iso
+    // projected center is well outside the visible camera viewport so
+    // we don't pay sort/draw cost for off-screen actors.
+    const margin = ts * 3;
+    const minSx = cam.x - margin;
+    const maxSx = cam.x + W / cam.zoom + margin;
+    const minSy = cam.y - margin;
+    const maxSy = cam.y + H / cam.zoom + margin;
+    type SceneEntry = { sortKey: number; draw: () => void };
+    const queue: SceneEntry[] = [];
+    const rows = grid.rows;
+
+    for (const b of this.state.buildings) {
+      const { sx, sy } = worldToIso(b.col, b.row, ts, rows);
+      if (sx < minSx || sx > maxSx || sy < minSy || sy > maxSy) continue;
+      queue.push({
+        sortKey: b.row + b.col,
+        draw: () => this.drawSingleBuilding(b, sx, sy, ts),
+      });
     }
 
-    // Pass 4: subtle tile borders for definition (only when zoomed in)
-    if (cam.zoom > 1.2) {
-      ctx.lineWidth = 0.5 / cam.zoom;
-      for (let r = startRow; r <= endRow; r++) {
-        for (let c = startCol; c <= endCol; c++) {
-          const tile = grid.tiles[r][c];
-          ctx.strokeStyle = TILE_BORDER_COLORS[tile.type] + "40";
-          ctx.strokeRect(c * ts, r * ts, ts, ts);
-        }
-      }
+    const tNow = performance.now() / 1000;
+    for (const c of this.state.citizens) {
+      const pos = getCitizenVisualPos(c);
+      const { sx, sy } = worldToIso(pos.col, pos.row, ts, rows);
+      if (sx < minSx || sx > maxSx || sy < minSy || sy > maxSy) continue;
+      queue.push({
+        sortKey: pos.row + pos.col + 0.01,
+        draw: () => this.drawSingleCitizen(c, pos, sx, sy, tNow, ts),
+      });
     }
 
-    // Pass 5: buildings (autonomous AI placements)
-    this.renderBuildings(startRow, endRow, startCol, endCol);
+    queue.sort((a, b) => a.sortKey - b.sortKey);
+    for (const e of queue) e.draw();
 
-    // Pass 5.5: citizens (NPCs walking the world)
-    this.renderCitizens(startRow, endRow, startCol, endCol);
-
-    // Phase 4: combat sparks (drawn above citizens, still in world space)
+    // Phase 4: combat sparks (drawn above all entities, still in world space)
     this.renderSparks();
 
     ctx.restore();
@@ -2708,14 +2693,25 @@ export class GameEngine {
   private handleTap(clientX: number, clientY: number) {
     const rect = this.canvas.getBoundingClientRect();
     const cam = this.state.camera;
-    const ts = this.state.grid.tileSize;
-    // Screen → world
+    const grid = this.state.grid;
+    const ts = grid.tileSize;
+    // Screen → iso world pixel
     const wx = (clientX - rect.left) / cam.zoom + cam.x;
     const wy = (clientY - rect.top) / cam.zoom + cam.y;
-    const tileR = Math.floor(wy / ts);
-    const tileC = Math.floor(wx / ts);
+    // Phase 13: invert the iso projection to recover the (col, row) tile
+    // under the cursor. CRITICAL: integer (col, row) values map to tile
+    // CENTERS in iso (not NW-corners like in top-down), so the diamond
+    // for tile (col0, row0) spans col ∈ [col0-0.5, col0+0.5] and row ∈
+    // [row0-0.5, row0+0.5]. We therefore round-to-nearest, NOT floor —
+    // flooring would bias every click into the NW-adjacent tile (off by
+    // one for the top half + left half of every diamond).
+    const { col, row } = isoToWorld(wx, wy, ts, grid.rows);
+    const tileR = Math.round(row);
+    const tileC = Math.round(col);
 
-    // Find the closest tap-tolerant citizen (mobile-friendly hitbox).
+    // Find the closest tap-tolerant citizen (mobile-friendly hitbox). The
+    // hitbox check is in iso pixel space — project each citizen to its iso
+    // diamond center and measure screen-space distance.
     const tileTol = ts * 0.7;
     const screenMinTol = 24 / cam.zoom;
     const tol = Math.max(tileTol, screenMinTol);
@@ -2724,9 +2720,8 @@ export class GameEngine {
     for (const c of this.state.citizens) {
       if (c.state === "DEAD") continue;
       const pos = getCitizenVisualPos(c);
-      const cx = pos.col * ts + ts * 0.5;
-      const cy = pos.row * ts + ts * 0.5;
-      const d = Math.hypot(wx - cx, wy - cy);
+      const { sx, sy } = worldToIso(pos.col, pos.row, ts, grid.rows);
+      const d = Math.hypot(wx - sx, wy - sy);
       if (d < bestDist) {
         bestDist = d;
         citizenHit = c;
@@ -2814,7 +2809,10 @@ export class GameEngine {
             (b) => b.row === row && b.col === col && b.status !== "rubble"
           );
           if (b) this.smiteBuilding(b, row, col);
-          else this.spawnLightning(col * ts + ts * 0.5, row * ts + ts * 0.5);
+          else {
+            const iso = worldToIso(col, row, ts, this.state.grid.rows);
+            this.spawnLightning(iso.sx, iso.sy);
+          }
         }
       } else if (this.currentBrush === "bless") {
         if (citizen) this.blessCitizen(citizen);
@@ -2845,9 +2843,13 @@ export class GameEngine {
   /** Judge / Smite: lightning kills an NPC outright. */
   private smiteCitizen(c: Citizen) {
     if (c.state === "DEAD") return;
-    const ts = this.state.grid.tileSize;
+    const grid = this.state.grid;
+    const ts = grid.tileSize;
     const pos = getCitizenVisualPos(c);
-    this.spawnLightning(pos.col * ts + ts * 0.5, pos.row * ts + ts * 0.5);
+    // Phase 13: strike at the iso-projected position so the bolt lands on
+    // the visible NPC, not at the top-down rect center.
+    const iso = worldToIso(pos.col, pos.row, ts, grid.rows);
+    this.spawnLightning(iso.sx, iso.sy);
     c.state = "DEAD";
     c.path = []; c.pathIndex = 0; c.progress = 0;
     c.targetTile = undefined; c.targetBuildingId = undefined;
@@ -2858,8 +2860,10 @@ export class GameEngine {
 
   /** Judge / Smite on building: lightning + reduce to rubble. */
   private smiteBuilding(b: Building, row: number, col: number) {
-    const ts = this.state.grid.tileSize;
-    this.spawnLightning(col * ts + ts * 0.5, row * ts + ts * 0.5);
+    const grid = this.state.grid;
+    const ts = grid.tileSize;
+    const iso = worldToIso(col, row, ts, grid.rows);
+    this.spawnLightning(iso.sx, iso.sy);
     b.status = "rubble";
     addChronicle(this.state, `A divine bolt reduces a building to rubble.`);
     this.desirability.markDirty();
@@ -2868,8 +2872,14 @@ export class GameEngine {
   /** Judge / Bless: a vanity spike that flips the NPC firmly Royalist. */
   private blessCitizen(c: Citizen) {
     if (c.state === "DEAD") return;
-    const ts = this.state.grid.tileSize;
+    const grid = this.state.grid;
+    const ts = grid.tileSize;
     const pos = getCitizenVisualPos(c);
+    // Phase 13: emit sparks from the iso-projected NPC body center (sy is
+    // the foot anchor; subtract ts*0.3 to land at chest height).
+    const iso = worldToIso(pos.col, pos.row, ts, grid.rows);
+    const sparkX = iso.sx;
+    const sparkY = iso.sy - ts * 0.3;
     c.vanity = 100;
     c.faction = "royalist";
     c.isRebel = false;
@@ -2881,8 +2891,8 @@ export class GameEngine {
       const sp = 0.05 + Math.random() * 0.08;
       this.sparks.push({
         kind: "bless",
-        x: pos.col * ts + ts * 0.5,
-        y: pos.row * ts + ts * 0.5,
+        x: sparkX,
+        y: sparkY,
         vx: Math.cos(a) * sp * ts,
         vy: -Math.abs(Math.sin(a) * sp * ts) - 0.04 * ts,
         life: 700,
@@ -2931,8 +2941,9 @@ export class GameEngine {
         b.status = "rubble";
       }
     }
-    // VFX: large fireburst + smoke at the impact center
-    this.spawnFireburst(col * ts + ts * 0.5, row * ts + ts * 0.5);
+    // VFX: large fireburst + smoke at the impact center (iso-projected)
+    const isoImpact = worldToIso(col, row, ts, grid.rows);
+    this.spawnFireburst(isoImpact.sx, isoImpact.sy);
     addChronicle(this.state, `A meteor strikes the realm — the earth itself is scarred.`);
     this.invalidatePathsThrough(changed);
     this.desirability.markDirty();

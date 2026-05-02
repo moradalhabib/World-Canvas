@@ -1,0 +1,44 @@
+Console Command: Phase 15 - Visual Spec Override
+Directive: "Acknowledge this prompt. The current visual prototype (flat squares, generic blocks) is insufficient. You must use the provided concept art (image_12.png, referenced visually in the input queue) as your absolute visual spec and benchmark. Replicate the entire scene's aesthetics immediately."
+
+1. True Isometric & Terrain:
+
+Move to detailed, isometric (dimetric 2:1) pixel-art tiles.
+
+Implement a 'Clutter Pass': Scatter procedural pixel-art rocks, wildflowers (white/yellow), and trees of varying scale/type across empty tiles. No two screens should look identical.
+
+2. Detailed 'Dollhouse' Buildings:
+
+Replace generic Monopoly pieces with unique, detailed structures for every building class.
+
+Apothecary: A green shingle roof with visible exterior herb planters.
+
+Tavern: Large structure with stacked barrels outside. Implement a warm internal 'ambient glow' effect.
+
+Dungeon: Brutalist, heavy stone design with an iron grate roof.
+
+Standard House: Wood and shingles.
+
+Dollhouse Visibility: The roof must become transparent (opacity 0.2) whenever any NPC is inside any building, revealing detailed pixelated furniture and the full NPC sprite.
+
+3. High-Fidelity, Age-Scaled NPCs:
+
+Create distinct, high-fidelity directional sprites (8-direction walk cycle).
+
+Implement visual aging: Child phase is 30% smaller scale; Elder phase has gray hair/beard and uses a distinct sprite.
+
+Detail the King Philip sprite with a full robe and distinct crown.
+
+4. Premium 'Dark Royal' UI Theme:
+
+Completely redesign the DOM UI (Needs, Chronicle, buttons) to match the dark charcoal background and ornate gold border aesthetic.
+
+Use elegant serif typography for titles and names.
+
+Civic Needs: Use color-coded styled bars (as shown in image_12.png).
+
+Royal Chronicle: Render text on a realistic parchment scroll surface.
+
+Fix The Hunger Bug: Reset civic Hunger to normal levels (e.g., 25) and fix the survival math immediately.
+
+Instruction: Confirm understanding of this entire specification. DO NOT CREATE PROTOTYPES. Deploy this final aesthetic overhaul now and maintain 60 FPS. Provide the updated JavaScript render functions and CSS blocks."

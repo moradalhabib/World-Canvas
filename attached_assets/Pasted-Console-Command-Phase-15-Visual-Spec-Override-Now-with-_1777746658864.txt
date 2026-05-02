@@ -1,0 +1,38 @@
+Console Command: Phase 15 - Visual Spec Override (Now with NPCs)
+Directive: "Acknowledge this prompt. The current visual prototype (flat squares, generic blocks, tiny potato NPCs) is insufficient. You must use the provided concept art and specification guide (image_17.png, which combines the benchmark image image_12.png with concrete breakdown instructions) as your absolute visual spec and benchmark. Replicate the entire scene's aesthetics and specific character designs immediately."
+
+1. True Isometric & Terrain:
+
+Move to detailed, isometric (dimetric 2:1) pixel-art tiles.
+
+Implement a 'Clutter Pass': Scatter procedural pixel-art rocks, wildflowers (white/yellow), and trees of varying scale/type across empty tiles, mimicking image_12.png. No two screens should look identical.
+
+2. Detailed 'Dollhouse' Buildings:
+
+Replace generic Monopoly pieces with unique, detailed structures (Houses, Tavern, Apothecary, Dungeon) that maintain unique silhouettes.
+
+Dollhouse Visibility: The roof must become transparent (opacity 0.2) whenever any NPC is inside any building, revealing detailed pixelated furniture.
+
+3. CRITICAL: High-Fidelity, Age-Scaled NPCs:
+
+Sprites: Overhaul all NPC assets to high-fidelity, detailed sprites as specified in 'SECTION 3: NPC SPRITE SPECIFICATIONS'.
+
+Directional Logic: Implement 8-direction directional facing (NW, N, NE, E, SE, S, SW, W) based on their velocity vector.
+
+Visual Aging:
+
+Child phase: Scaled down 30%.
+
+Elder phase: Apply distinct gray/white hair and beard asset layer.
+
+King Philip: Apply the unique crown and robe sprite.
+
+4. Premium 'Dark Royal' UI Theme:
+
+Redesign the DOM UI (Needs, Chronicle, buttons) to match the dark charcoal background and ornate gold border aesthetic.
+
+Use elegant serif typography. Render text on a realistic parchment scroll surface for the Chronicle.
+
+Fix The Hunger Bug: Reset civic Hunger to normal levels and fix the survival math immediately.
+
+Instruction: Confirm understanding of this entire visual specification, including the dedicated NPC requirements. DO NOT CREATE PROTOTYPES. Deploy this final aesthetic overhaul now and maintain 60 FPS. Provide the updated JavaScript render functions and CSS blocks."
