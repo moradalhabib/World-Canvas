@@ -70,7 +70,13 @@ export interface GameState {
 
 /* ── Phase 16: Living World — fauna ── */
 
-export type AnimalKind = "sheep";
+/**
+ * Phase 17: widened to include wolves (predator counterpart to sheep).
+ * Both species share the same Animal interface — the renderer dispatches
+ * on `kind` to pick the correct sprite. Wolves wander the same terrain
+ * as sheep (grass / forest) but with a darker, more angular silhouette.
+ */
+export type AnimalKind = "sheep" | "wolf";
 
 /**
  * Lightweight ambient fauna. Renders in the same depth-sorted scene queue

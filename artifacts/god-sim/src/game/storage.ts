@@ -13,8 +13,16 @@ import { createDefaultCivilization } from "./civilization";
 import { normalizeCitizens, spawnInitialCitizens } from "./npc";
 import { anointInitialKing, ensureMonarch, loadChronicle } from "./royalty";
 
-/** Phase 16: Spawn N sheep on random grass/forest tiles for fresh + migrated saves. */
-export function spawnInitialAnimals(grid: Grid, count: number): Animal[] {
+/**
+ * Phase 16/17: Spawn fauna on random grass/forest tiles for fresh + migrated
+ * saves. Phase 17 widened to take separate `sheepCount` and `wolfCount` so
+ * the migration path can also seed predators when a v12 save is upgraded.
+ *
+ * Both species use the same Animal interface — only `kind` and the renderer
+ * dispatch differ. We pick from the same candidate pool because both species
+ * walk the same terrain (grass / forest only).
+ */
+export function spawnInitialAnimals(grid: Grid, sheepCount: number, wolfCount: number = 0): Animal[] {
   const animals: Animal[] = [];
   const candidates: Array<{ r: number; c: number }> = [];
   for (let r = 0; r < grid.rows; r++) {
@@ -24,11 +32,27 @@ export function spawnInitialAnimals(grid: Grid, count: number): Animal[] {
     }
   }
   if (candidates.length === 0) return animals;
-  for (let i = 0; i < count; i++) {
+  const stamp = Date.now();
+  for (let i = 0; i < sheepCount; i++) {
     const pick = candidates[Math.floor(Math.random() * candidates.length)];
     animals.push({
-      id: `sheep-${Date.now()}-${i}-${Math.floor(Math.random() * 9999)}`,
+      id: `sheep-${stamp}-${i}-${Math.floor(Math.random() * 9999)}`,
       kind: "sheep",
+      row: pick.r,
+      col: pick.c,
+      targetRow: pick.r,
+      targetCol: pick.c,
+      progress: 0,
+      dir: (Math.floor(Math.random() * 4) as 0 | 1 | 2 | 3),
+      nextWanderMs: 0,
+      grazingUntilMs: 0,
+    });
+  }
+  for (let i = 0; i < wolfCount; i++) {
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    animals.push({
+      id: `wolf-${stamp}-${i}-${Math.floor(Math.random() * 9999)}`,
+      kind: "wolf",
       row: pick.r,
       col: pick.c,
       targetRow: pick.r,
@@ -72,8 +96,14 @@ const SAVE_KEY = "god_sim_state";
  *        sheep on grass/forest tiles so the realm doesn't look lifeless
  *        after upgrade. spawnInitialAnimals is called inside loadState
  *        for any save older than v12.
+ *  v13: + Phase 17 Master VFX & Ecosystem — widens AnimalKind to include
+ *        "wolf". v12 saves only contain sheep, so on upgrade we KEEP all
+ *        persisted sheep AND inject 4 fresh wolves into the herd so the
+ *        realm gains its predator population without losing existing
+ *        animal identity. Older saves go through spawnInitialAnimals
+ *        directly with both sheep and wolf counts.
  */
-const CURRENT_VERSION = 12;
+const CURRENT_VERSION = 13;
 const INITIAL_CITIZEN_COUNT = 6;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;
@@ -157,8 +187,8 @@ export function createDefaultState(): GameState {
     currentSeason: monthToSeason(1),
     currentWeather: "CLEAR",
     lastWeatherRollMonth: 1,
-    // Phase 16: seed 10 ambient sheep on grass/forest tiles.
-    animals: spawnInitialAnimals(grid, 10),
+    // Phase 16/17: seed 10 sheep + 4 wolves on grass/forest tiles.
+    animals: spawnInitialAnimals(grid, 10, 4),
   };
   // Phase 3B: anoint the founding King + Queen and write the first chronicle.
   anointInitialKing(state);
@@ -297,7 +327,8 @@ export function loadState(): GameState | null {
       s.version !== 8 &&
       s.version !== 9 &&
       s.version !== 10 && // Phase 13 saves migrate cleanly to Phase 14
-      s.version !== 11    // Phase 14 saves migrate cleanly to Phase 16
+      s.version !== 11 && // Phase 14 saves migrate cleanly to Phase 16
+      s.version !== 12    // Phase 16 saves migrate cleanly to Phase 17
     ) {
       return null;
     }
@@ -309,6 +340,7 @@ export function loadState(): GameState | null {
     let citizens: Citizen[];
     if (
       (s.version === CURRENT_VERSION ||
+        s.version === 12 || // Phase 16 saves — preserve citizens through Phase 17 upgrade.
         s.version === 11 || // Phase 14 saves carry full citizen state — DO NOT
                             // wipe to fresh-spawn population on Phase 16 upgrade.
         s.version === 10 ||
@@ -365,10 +397,18 @@ export function loadState(): GameState | null {
       currentWeather: s.currentWeather ?? "CLEAR",
       lastWeatherRollMonth:
         s.lastWeatherRollMonth ?? s.time.gameYear * 12 + s.time.gameMonth,
-      // Phase 16: seed sheep when missing (any save older than v12). Saves
-      // already at v12+ keep their persisted herd so individual sheep
-      // identity is preserved across reload.
-      animals: Array.isArray(s.animals) ? s.animals : spawnInitialAnimals(grid, 10),
+      // Phase 16/17: animal hydration with predator backfill.
+      //   - v13+ (current) saves: trust persisted herd, contains both species.
+      //   - v12 saves: contain only sheep — KEEP them all, inject 4 fresh
+      //     wolves so the predator population appears post-upgrade.
+      //   - older saves (no `animals` field): spawn full fresh herd.
+      // The predator-injection branch preserves sheep identity (id/position/
+      // grazing state) — only NEW wolf entries are appended.
+      animals: Array.isArray(s.animals)
+        ? (s.version === 12
+            ? [...s.animals, ...spawnInitialAnimals(grid, 0, 4)]
+            : s.animals)
+        : spawnInitialAnimals(grid, 10, 4),
     };
 
     // v3 → v4: no monarch existed. Anoint the existing population.
