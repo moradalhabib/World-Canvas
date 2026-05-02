@@ -328,3 +328,181 @@ body {
   letter-spacing: 0.5px;
   text-transform: uppercase;
 }
+
+/* ─────────────────────────────────────────────────────────────────── */
+/* Phase 5: Divine Powers toolbar — glassmorphism, right edge */
+/* ─────────────────────────────────────────────────────────────────── */
+
+.divine-toolbar {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.tool-group {
+  position: relative;
+  pointer-events: auto;
+}
+
+.tool-btn {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  border: 1px solid rgba(244, 207, 91, 0.45);
+  background: rgba(20, 22, 38, 0.55);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  color: #f4cf5b;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  transition:
+    transform 120ms ease-out,
+    background 160ms ease-out,
+    border-color 160ms ease-out,
+    box-shadow 160ms ease-out;
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.tool-btn:hover {
+  background: rgba(40, 44, 70, 0.7);
+  transform: translateX(-2px);
+  border-color: rgba(244, 207, 91, 0.85);
+}
+.tool-btn.active {
+  background: linear-gradient(
+    180deg,
+    rgba(244, 207, 91, 0.35),
+    rgba(180, 130, 30, 0.35)
+  );
+  border-color: #f4cf5b;
+  color: #fffaee;
+  box-shadow:
+    0 0 18px rgba(244, 207, 91, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.tool-glyph {
+  font-size: 22px;
+  line-height: 1;
+}
+.tool-label {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.tool-submenu {
+  position: absolute;
+  right: 76px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(244, 207, 91, 0.35);
+  background: rgba(15, 17, 32, 0.78);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  min-width: 150px;
+  animation: tool-fade-in 140ms ease-out;
+}
+@keyframes tool-fade-in {
+  from { opacity: 0; transform: translate(8px, -50%); }
+  to   { opacity: 1; transform: translate(0,   -50%); }
+}
+
+.tool-sub-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(40, 44, 70, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #e8e6dc;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 120ms ease-out, border-color 120ms ease-out;
+}
+.tool-sub-btn:hover {
+  background: rgba(60, 66, 100, 0.75);
+  border-color: rgba(244, 207, 91, 0.5);
+}
+.tool-sub-btn.active {
+  background: linear-gradient(180deg, rgba(244, 207, 91, 0.32), rgba(180, 130, 30, 0.28));
+  border-color: #f4cf5b;
+  color: #fffaee;
+}
+.tool-sub-btn .tool-glyph {
+  font-size: 18px;
+}
+
+/* Active-power banner pinned above the time controls */
+.power-banner {
+  position: absolute;
+  bottom: 86px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(244, 207, 91, 0.55);
+  background: rgba(15, 17, 32, 0.78);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  color: #fffaee;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  z-index: 30;
+  box-shadow: 0 0 28px rgba(244, 207, 91, 0.35);
+  animation: banner-pulse 2s ease-in-out infinite;
+}
+@keyframes banner-pulse {
+  0%, 100% { box-shadow: 0 0 22px rgba(244, 207, 91, 0.30); }
+  50%      { box-shadow: 0 0 36px rgba(244, 207, 91, 0.55); }
+}
+.power-banner-label {
+  color: #f4cf5b;
+  font-weight: 700;
+  font-size: 10px;
+}
+.power-banner-value {
+  font-weight: 600;
+}
+.power-banner-cancel {
+  margin-left: 6px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: rgba(127, 29, 29, 0.85);
+  color: #fee2e2;
+  border: 1px solid rgba(254, 226, 226, 0.25);
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+.power-banner-cancel:hover {
+  background: #991b1b;
+}
+
+/* Phone: collapse labels to icons only */
+@media (max-width: 720px) {
+  .tool-btn { width: 52px; height: 52px; }
+  .tool-label { display: none; }
+  .tool-submenu { right: 62px; min-width: 140px; }
+}

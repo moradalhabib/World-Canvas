@@ -104,13 +104,63 @@ export default function App() {
   // Remembered timeScale at the moment the monologue paused the game.
   const prevScaleRef = useRef<0 | 1 | 2>(1);
 
+  // Phase 5: Divine Powers UI state.
+  const [openCategory, setOpenCategory] = useState<ToolbarCategory | null>(null);
+  const [activePower, setActivePower] = useState<DivinePower>("none");
+  const [activeBrush, setActiveBrush] = useState<DivineBrush>("none");
+  const [winterOn, setWinterOn] = useState(false);
+
   const onCitizenTap = useCallback((info: CitizenTapInfo) => {
     const eng = engineRef.current;
     if (!eng) return;
+    // Phase 5: monologue must NOT open while a divine power is active.
+    if (eng.getPower().power !== "none") return;
     prevScaleRef.current = eng.getTimeScale();
     eng.setTimeScale(0);
     setTimeScaleState(0);
     setMonologue({ citizen: info.citizen, x: info.screenX, y: info.screenY });
+  }, []);
+
+  // Phase 5: pick a brush. Sets the engine's active power and updates the
+  // toolbar highlight. Re-clicking the same brush clears it.
+  const selectBrush = useCallback(
+    (cat: ToolbarCategory, brush: DivineBrush) => {
+      const eng = engineRef.current;
+      if (!eng) return;
+      if (activePower === CAT_TO_POWER[cat] && activeBrush === brush) {
+        eng.clearPower();
+        setActivePower("none");
+        setActiveBrush("none");
+        return;
+      }
+      const power = CAT_TO_POWER[cat];
+      eng.setPower(power, brush);
+      setActivePower(power);
+      setActiveBrush(brush);
+    },
+    [activePower, activeBrush]
+  );
+
+  // Phase 5: Chronomancer toggles — they fire once and don't enter brush mode.
+  const toggleFreeze = useCallback(() => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    eng.toggleFreezeTime();
+    setTimeScaleState(eng.getTimeScale());
+  }, []);
+  const toggleWinter = useCallback(() => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    eng.toggleWinter();
+    setWinterOn(eng.isWinter());
+  }, []);
+  const cancelPower = useCallback(() => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    eng.clearPower();
+    setActivePower("none");
+    setActiveBrush("none");
+    setOpenCategory(null);
   }, []);
 
   const closeMonologue = useCallback(() => {
@@ -166,6 +216,7 @@ export default function App() {
     setChronicle(s.chronicle.slice(-6).reverse());
     setNobleDissent(s.nobleDissent);
     setDayNight(s.dayNight);
+    setWinterOn(s.winterActive);
     return () => {
       engine.destroy();
       engineRef.current = null;
@@ -379,6 +430,80 @@ export default function App() {
               <span>{e.text}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Phase 5: Divine Powers toolbar (right side, glassmorphism) */}
+      <div className="divine-toolbar" role="toolbar" aria-label="Divine Powers">
+        {(["architect", "judge", "wrath", "chronomancer"] as ToolbarCategory[]).map((cat) => {
+          const isOpen = openCategory === cat;
+          const isActive =
+            (cat !== "chronomancer" && CAT_TO_POWER[cat] === activePower) ||
+            (cat === "chronomancer" && (winterOn || timeScale === 0));
+          return (
+            <div className={`tool-group ${isOpen ? "open" : ""}`} key={cat}>
+              <button
+                className={`tool-btn ${isActive ? "active" : ""}`}
+                onClick={() => setOpenCategory(isOpen ? null : cat)}
+                aria-label={CAT_LABELS[cat]}
+                aria-expanded={isOpen}
+                title={CAT_LABELS[cat]}
+              >
+                <span className="tool-glyph">{CAT_GLYPHS[cat]}</span>
+                <span className="tool-label">{CAT_LABELS[cat]}</span>
+              </button>
+              {isOpen && (
+                <div className="tool-submenu">
+                  {cat === "chronomancer" ? (
+                    <>
+                      <button
+                        className={`tool-sub-btn ${timeScale === 0 ? "active" : ""}`}
+                        onClick={toggleFreeze}
+                      >
+                        <span className="tool-glyph">❄</span>
+                        <span>{timeScale === 0 ? "Unfreeze" : "Freeze Time"}</span>
+                      </button>
+                      <button
+                        className={`tool-sub-btn ${winterOn ? "active" : ""}`}
+                        onClick={toggleWinter}
+                      >
+                        <span className="tool-glyph">☃</span>
+                        <span>{winterOn ? "End Winter" : "Summon Winter"}</span>
+                      </button>
+                    </>
+                  ) : (
+                    BRUSH_GROUPS[cat].map((opt) => {
+                      const isSel =
+                        activePower === CAT_TO_POWER[cat] && activeBrush === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          className={`tool-sub-btn ${isSel ? "active" : ""}`}
+                          onClick={() => selectBrush(cat, opt.id)}
+                        >
+                          <span className="tool-glyph">{opt.glyph}</span>
+                          <span>{opt.label}</span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Phase 5: Active power banner (replaces toolbar tooltips) */}
+      {activePower !== "none" && (
+        <div className="power-banner">
+          <span className="power-banner-label">DIVINE POWER ACTIVE</span>
+          <span className="power-banner-value">
+            {activePower.toUpperCase()} · {activeBrush.replace(/^paint_/, "").toUpperCase()}
+          </span>
+          <button className="power-banner-cancel" onClick={cancelPower}>
+            Cancel
+          </button>
         </div>
       )}
 
