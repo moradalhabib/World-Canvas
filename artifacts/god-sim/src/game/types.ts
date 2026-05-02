@@ -41,6 +41,12 @@ export interface GameState {
   buildings: Building[];
   civilization: CivilizationState;
   citizens: Citizen[];
+  /** Phase 3B: Political tension among nobles. HIGH unlocks the future Civil War mechanic. */
+  nobleDissent: "LOW" | "MEDIUM" | "HIGH";
+  /** Phase 3B: In-memory mirror of the localStorage chronicle (capped). */
+  chronicle: ChronicleEntry[];
+  /** Phase 3B: Last year aging/reproduction tick was processed (so we run once per game-year). */
+  lastRoyalYearTicked: number;
 }
 
 export const TILE_COLORS: Record<TileType, string> = {
@@ -220,7 +226,10 @@ export type CitizenState =
   | "PRAYING"
   | "ROGUE"
   | "DEAD"
-  | "WORKING";
+  | "WORKING"
+  | "MINISTERING";
+
+export type DissentLevel = "LOW" | "MEDIUM" | "HIGH";
 
 export interface PathStep {
   row: number;
@@ -252,4 +261,34 @@ export interface Citizen {
   hue: number;
   /** Social tier — drives sprite color + crown rendering. */
   socialTier: "peasant" | "noble" | "king";
+
+  /* -- Phase 3B: Royal Succession & Lineage Engine -- */
+  /** Display name (used in chronicles). */
+  name: string;
+  /** Sex — drives queen selection & reproduction. */
+  sex: "male" | "female";
+  /** Game year of birth (for age = currentYear - birthYear). */
+  birthYear: number;
+  /** True for the reigning monarch. */
+  isKing?: boolean;
+  /** True for the King's spouse. */
+  isQueen?: boolean;
+  /** True for an heir produced by the royal couple. */
+  isPrince?: boolean;
+  /** True for the regent spouse after a King dies leaving a minor heir. */
+  isDowagerQueen?: boolean;
+  /** Hidden 0..100, set to 100 on royal birth; future challenges can erode it. */
+  legitimacy?: number;
+  /** Spouse citizen id (King <-> Queen pairing). */
+  spouseId?: string;
+  /** Year this NPC died (set when state becomes DEAD). */
+  deathYear?: number;
+}
+
+/* ── Phase 3B: Chronicle entries ── */
+
+export interface ChronicleEntry {
+  year: number;
+  month: number;
+  text: string;
 }

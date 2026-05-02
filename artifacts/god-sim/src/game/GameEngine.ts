@@ -386,10 +386,97 @@ export class GameEngine {
   }
 
   /**
-   * Phase 3: Draw all citizens within the visible tile bounds.
-   * Each citizen renders as a small filled circle (hue-shifted per-NPC) with
-   * a white border for visibility against any biome. Hungry citizens get an
-   * orange "alert" ring and a yellow line to their target tile.
+   * Build (or rebuild) a pre-rendered humanoid sprite for a given social tier.
+   * Sprite = head circle + body rectangle (legs are drawn live for animation).
+   * Stamping these at draw-time keeps perf flat at 100+ citizens since the
+   * static body never re-paints per frame.
+   */
+  private buildNpcSprite(tier: "peasant" | "noble" | "king"): HTMLCanvasElement {
+    const ts = this.state.grid.tileSize;
+    // Sprite canvas covers head + body + small crown overhead. Legs sit below
+    // the canvas so we don't bake them in (they animate per frame).
+    const W = Math.ceil(ts * 0.7);
+    const H = Math.ceil(ts * 1.0);
+    const cv = document.createElement("canvas");
+    cv.width = W;
+    cv.height = H;
+    const c = cv.getContext("2d")!;
+
+    const cx = W / 2;
+    const bodyW = ts * 0.42;
+    const bodyH = ts * 0.46;
+    const headR = ts * 0.16;
+    const headCy = H * 0.36;
+    const bodyTop = headCy + headR * 0.6;
+
+    const bodyColor =
+      tier === "peasant" ? "#A18262" :        // Mud/Brown Tunic
+      tier === "noble"   ? "#8A2BE2" :        // Royal Purple
+                           "#8A2BE2";         // King uses Noble base
+    const headColor = "#F2C9A0";              // Skin tone (shared)
+
+    // Body rectangle (rounded shoulders for polish)
+    c.fillStyle = bodyColor;
+    c.beginPath();
+    const r = ts * 0.06;
+    c.moveTo(cx - bodyW / 2 + r, bodyTop);
+    c.lineTo(cx + bodyW / 2 - r, bodyTop);
+    c.quadraticCurveTo(cx + bodyW / 2, bodyTop, cx + bodyW / 2, bodyTop + r);
+    c.lineTo(cx + bodyW / 2, bodyTop + bodyH);
+    c.lineTo(cx - bodyW / 2, bodyTop + bodyH);
+    c.lineTo(cx - bodyW / 2, bodyTop + r);
+    c.quadraticCurveTo(cx - bodyW / 2, bodyTop, cx - bodyW / 2 + r, bodyTop);
+    c.closePath();
+    c.fill();
+    // Body outline for readability against any biome
+    c.strokeStyle = "rgba(0,0,0,0.45)";
+    c.lineWidth = Math.max(1, ts * 0.025);
+    c.stroke();
+
+    // Head circle
+    c.fillStyle = headColor;
+    c.beginPath();
+    c.arc(cx, headCy, headR, 0, Math.PI * 2);
+    c.fill();
+    c.strokeStyle = "rgba(0,0,0,0.5)";
+    c.lineWidth = Math.max(1, ts * 0.022);
+    c.stroke();
+
+    // King: tiny yellow triangle crown (3px-style) atop the head
+    if (tier === "king") {
+      const crownW = ts * 0.18;
+      const crownH = ts * 0.12;
+      const cyTop = headCy - headR - ts * 0.02;
+      c.fillStyle = "#FFD700";
+      c.beginPath();
+      c.moveTo(cx - crownW / 2, cyTop);
+      c.lineTo(cx + crownW / 2, cyTop);
+      c.lineTo(cx, cyTop - crownH);
+      c.closePath();
+      c.fill();
+      c.strokeStyle = "rgba(120,80,0,0.8)";
+      c.lineWidth = Math.max(1, ts * 0.02);
+      c.stroke();
+    }
+
+    return cv;
+  }
+
+  /** Lazily build / rebuild all tier sprite buffers when tile size changes. */
+  private ensureNpcSprites() {
+    const ts = this.state.grid.tileSize;
+    if (this.npcSpriteTileSize === ts && this.npcSprites.size === 3) return;
+    this.npcSprites.clear();
+    this.npcSprites.set("peasant", this.buildNpcSprite("peasant"));
+    this.npcSprites.set("noble",   this.buildNpcSprite("noble"));
+    this.npcSprites.set("king",    this.buildNpcSprite("king"));
+    this.npcSpriteTileSize = ts;
+  }
+
+  /**
+   * Phase 3 / 4: Draw all citizens within the visible tile bounds as
+   * humanoid sprites (pre-rendered head+body buffer + live-drawn legs).
+   * State icons (halo, rogue ring, dead rotation) are layered on top.
    */
   private renderCitizens(
     startRow: number,
@@ -402,11 +489,11 @@ export class GameEngine {
     const cam = this.state.camera;
     if (this.state.citizens.length === 0) return;
 
-    const radius = ts * 0.18;
-    const borderWidth = Math.max(1, ts * 0.04);
+    this.ensureNpcSprites();
 
-    // Sub-second pulse for praying-halo / rogue-outline shimmer
+    // Sub-second pulse for halo / rogue shimmer / leg gait
     const t = performance.now() / 1000;
+    const radius = ts * 0.18; // legacy radius — kept for path-line spacing
 
     for (const c of this.state.citizens) {
       const pos = getCitizenVisualPos(c);
@@ -417,43 +504,7 @@ export class GameEngine {
       const cx = pos.col * ts + ts * 0.5;
       const cy = pos.row * ts + ts * 0.5;
 
-      /* ---------- DEAD: render as a stone gravestone, then skip ---------- */
-      if (c.state === "DEAD") {
-        const w = radius * 1.4;
-        const h = radius * 2.0;
-        const top = cy - h * 0.55;
-        // Ground shadow
-        ctx.fillStyle = "rgba(0, 0, 0, 0.40)";
-        ctx.beginPath();
-        ctx.ellipse(cx, cy + h * 0.45, w * 0.9, radius * 0.35, 0, 0, Math.PI * 2);
-        ctx.fill();
-        // Stone slab — rounded top
-        ctx.fillStyle = "#6f7480";
-        ctx.beginPath();
-        ctx.moveTo(cx - w / 2, cy + h * 0.45);
-        ctx.lineTo(cx - w / 2, top + w / 2);
-        ctx.arc(cx, top + w / 2, w / 2, Math.PI, 0);
-        ctx.lineTo(cx + w / 2, cy + h * 0.45);
-        ctx.closePath();
-        ctx.fill();
-        // Subtle highlight
-        ctx.fillStyle = "rgba(255, 255, 255, 0.12)";
-        ctx.fillRect(cx - w / 2 + w * 0.1, top + w * 0.5, w * 0.18, h * 0.7);
-        // Carved cross
-        ctx.fillStyle = "#2c3038";
-        const crossW = w * 0.16;
-        ctx.fillRect(cx - crossW / 2, top + w * 0.55, crossW, h * 0.55);
-        ctx.fillRect(cx - w * 0.30, top + w * 0.7, w * 0.6, crossW);
-        continue;
-      }
-
-      // Soft drop shadow on the ground beneath the citizen
-      ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
-      ctx.beginPath();
-      ctx.ellipse(cx, cy + radius * 0.7, radius * 0.9, radius * 0.35, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      /* ---------- Pathfinding line (yellow dashed) for SEEK_FOOD ---------- */
+      /* ---------- Pathfinding hint lines (drawn under sprite) ---------- */
       if (c.state === "SEEK_FOOD" && c.targetTile && cam.zoom > 0.6) {
         const tx = c.targetTile.col * ts + ts * 0.5;
         const ty = c.targetTile.row * ts + ts * 0.5;
@@ -466,8 +517,6 @@ export class GameEngine {
         ctx.stroke();
         ctx.setLineDash([]);
       }
-
-      /* ---------- ROGUE pathfinding line (red dashed) ---------- */
       if (c.state === "ROGUE" && c.targetTile && cam.zoom > 0.6) {
         const tx = c.targetTile.col * ts + ts * 0.5;
         const ty = c.targetTile.row * ts + ts * 0.5;
@@ -481,53 +530,99 @@ export class GameEngine {
         ctx.setLineDash([]);
       }
 
-      /* ---------- PRAYING golden halo (pulsing) ---------- */
+      // Soft drop shadow on the ground beneath the citizen
+      ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + ts * 0.32, ts * 0.22, ts * 0.07, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      /* ---------- PRAYING halo (drawn behind sprite) ---------- */
       if (c.state === "PRAYING") {
         const pulse = 0.6 + 0.25 * Math.sin(t * 3 + c.hue);
-        const haloR = radius * (1.9 + 0.15 * Math.sin(t * 3 + c.hue));
-        const grad = ctx.createRadialGradient(cx, cy, radius * 0.4, cx, cy, haloR);
-        grad.addColorStop(0, `rgba(255, 240, 170, ${0.55 * pulse})`);
-        grad.addColorStop(0.6, `rgba(255, 220, 120, ${0.25 * pulse})`);
-        grad.addColorStop(1, "rgba(255, 220, 120, 0)");
+        const haloR = ts * (0.22 + 0.04 * Math.sin(t * 3 + c.hue));
+        const haloCy = cy - ts * 0.32;
+        const grad = ctx.createRadialGradient(cx, haloCy, ts * 0.04, cx, haloCy, haloR);
+        grad.addColorStop(0, `rgba(255, 255, 255, ${0.85 * pulse})`);
+        grad.addColorStop(0.5, `rgba(255, 245, 200, ${0.45 * pulse})`);
+        grad.addColorStop(1, "rgba(255, 240, 180, 0)");
         ctx.fillStyle = grad;
         ctx.beginPath();
-        ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
+        ctx.arc(cx, haloCy, haloR, Math.PI, 0); // semi-circle (top half)
+        ctx.closePath();
         ctx.fill();
       }
 
-      // Body — saturated, bright, hue-rotated
-      const fill = `hsl(${c.hue}, 75%, 55%)`;
-      ctx.fillStyle = fill;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.fill();
+      // Pick the buffer for this NPC's tier
+      const sprite = this.npcSprites.get(c.socialTier) ?? this.npcSprites.get("peasant")!;
+      const sw = sprite.width;
+      const sh = sprite.height;
+      // Anchor: feet centered at (cx, cy + ts*0.32). Sprite origin top-left.
+      const dx = cx - sw / 2;
+      const dy = cy + ts * 0.32 - sh;
 
-      /* ---------- Border: white normally, red+thick for ROGUE ---------- */
-      if (c.state === "ROGUE") {
-        ctx.strokeStyle = "#ff2d2d";
-        ctx.lineWidth = borderWidth * 1.8;
-      } else {
-        ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = borderWidth;
+      const isMoving =
+        c.state === "MOVING" || c.state === "SEEK_FOOD" || c.state === "ROGUE";
+      const isDead = c.state === "DEAD";
+
+      // Leg color matches body for cohesion
+      const legColor =
+        c.socialTier === "peasant" ? "#6E5440" :
+        c.socialTier === "noble"   ? "#5A1B95" :
+                                     "#5A1B95";
+      const legW = ts * 0.10;
+      const legH = ts * 0.14;
+      const legY = cy + ts * 0.18;
+      // Alternating gait: phase shifts by NPC id-hash so they don't march in lockstep
+      const gaitPhase = c.hue * 0.05;
+      const swing = isMoving ? Math.sin(t * 8 + gaitPhase) : 0;
+      const offsetA = swing * ts * 0.06;
+      const offsetB = -offsetA;
+
+      /* ---------- DEAD: rotated 90° + 0.4 alpha for the WHOLE figure ---------- */
+      if (isDead) {
+        ctx.save();
+        ctx.globalAlpha = 0.4;
+        ctx.translate(cx, cy);
+        ctx.rotate(Math.PI / 2);
+        ctx.translate(-cx, -cy);
+        ctx.drawImage(sprite, dx, dy);
+        // Static (non-swinging) legs while dead
+        ctx.fillStyle = legColor;
+        ctx.fillRect(cx - legW - ts * 0.01, legY, legW, legH);
+        ctx.fillRect(cx + ts * 0.01, legY, legW, legH);
+        ctx.restore();
+        continue;
       }
-      ctx.stroke();
 
-      /* ---------- SEEK_FOOD alert ring (orange) ---------- */
-      if (c.state === "SEEK_FOOD") {
-        ctx.strokeStyle = "rgba(255, 130, 30, 0.85)";
-        ctx.lineWidth = borderWidth * 0.9;
+      // Legs (drawn first so body overlaps the tops cleanly)
+      ctx.fillStyle = legColor;
+      ctx.fillRect(cx - legW - ts * 0.01, legY + offsetA, legW, legH);
+      ctx.fillRect(cx + ts * 0.01,        legY + offsetB, legW, legH);
+
+      // Body + head sprite
+      ctx.drawImage(sprite, dx, dy);
+
+      /* ---------- ROGUE: pulsing red overhead circle ---------- */
+      if (c.state === "ROGUE") {
+        const pulse = 0.6 + 0.4 * Math.abs(Math.sin(t * 4 + c.hue));
+        const iconR = ts * (0.07 + 0.015 * Math.sin(t * 4 + c.hue));
+        const iconCy = cy - ts * 0.45;
+        ctx.fillStyle = `rgba(255, 50, 50, ${0.85 * pulse})`;
         ctx.beginPath();
-        ctx.arc(cx, cy, radius * 1.55, 0, Math.PI * 2);
+        ctx.arc(cx, iconCy, iconR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 200, 200, 0.9)";
+        ctx.lineWidth = Math.max(1, ts * 0.018);
         ctx.stroke();
       }
 
-      /* ---------- Tiny prayer mark above PRAYING citizens ---------- */
-      if (c.state === "PRAYING" && cam.zoom > 0.6) {
-        ctx.fillStyle = "rgba(255, 245, 200, 0.95)";
-        ctx.font = `${Math.max(10, ts * 0.32)}px serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "alphabetic";
-        ctx.fillText("✝", cx, cy - radius * 1.6);
+      /* ---------- SEEK_FOOD: small orange alert ring under feet ---------- */
+      if (c.state === "SEEK_FOOD") {
+        ctx.strokeStyle = "rgba(255, 130, 30, 0.85)";
+        ctx.lineWidth = Math.max(1, ts * 0.03);
+        ctx.beginPath();
+        ctx.ellipse(cx, cy + ts * 0.32, radius * 1.2, radius * 0.45, 0, 0, Math.PI * 2);
+        ctx.stroke();
       }
     }
   }

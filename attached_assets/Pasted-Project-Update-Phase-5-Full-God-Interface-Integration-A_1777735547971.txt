@@ -1,0 +1,41 @@
+Project Update: Phase 5 - Full God Interface Integration
+Acknowledge this prompt. This is a comprehensive integration that must not overwrite existing NPC AI or lineage logic. We are appending the 'Divine Powers' systems into the game loop. Provide the updated JavaScript logic, UI HTML, and CSS.
+
+1. State Management for Input: Create a currentPower variable in the global state (default: 'none'). Modify the canvas.onClick/canvas.onTouch handler:
+
+If currentPower == 'none', keep the existing Monologue UI logic for tapping NPCs.
+
+If currentPower is active, standard tapping is disabled; execute the divine interaction function instead.
+
+2. Divine UI (The Toolbar): Implement a minimalist vertical toolbar on the side of the screen. Icons for: 1. Architect (Terraform), 2. Judge (Targeted), 3. Wrath (AOE Disaster), 4. Chronomancer (Environment/Time). Add a sub-menu to select specific brushes (Mountain, Smite, Meteor, Winter). Use matching Glassmorphism styles.
+
+3. Architect Logic (Terraforming): Create brushes for terrain painting (Single or 3x3). When terrain tiles are modified (e.g., from Grass to Mountain), force an immediate reCalculatePath() event for any NPCs currently on a MOVING state path that intersects those coordinates.
+
+4. Judge Logic (Targeted):
+
+Smite: Tapping an NPC sets state = DEAD. Plays lightning particle effect on those coordinates. Tapping a building sets it to 'Rubble'.
+
+Bless: Tapping an NPC sets gold += 5000 (Vanity spike) or sets faction = Royalist.
+
+5. Wrath Logic (AOE Disasters):
+
+Meteor: Targets a 3x3 grid. Sets building status to destroyed, kills NPCs in range. Plays a fire/explosion effect. Changes terrain to a specific 'CRATER' texture.
+
+6. Chronomancy Logic (Environment):
+
+Freeze Time: Set the time loop multiplier to 0 (Pause).
+
+Winter: Global modifier. Crop yield = 0. Hunger increase rate = 2x. Apply a slight blue hue overlay to the canvas renderer.
+
+Instruction: Confirm understanding. Provide the complete code for this major phase of development, optimizing for performance as the canvas must now handle multiple particle effects simultaneously on disasters.
+
+The Ultimate Testing Session
+Once the Agent provides the code and the canvas refreshes, your game will look like a completed masterpiece on your iPhone. You won't just be watching—you will be the ultimate power.
+
+Try this specific sequence of actions to test the depth of the engine we just built:
+
+Wait for a few "Noble" NPCs to accumulate wealth.
+
+Use the Architect tool to paint a ring of water around their high-class neighborhood, trapping them.
+
+Activate the "Divine Monologue" (Tapping with currentPower == none) and listen to their thoughts. What does a trapped noble think when they can't pathfind to food?
