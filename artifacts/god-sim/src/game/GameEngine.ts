@@ -279,13 +279,11 @@ export class GameEngine {
   /**
    * Phase 6: Each in-game month boundary, toggle the day/night phase.
    * Entering Night runs the Sleep Protocol (NPCs path home, homeless lose
-   * Safety). Entering Day wakes everyone.
+   * Safety). Entering Day wakes everyone. Called exactly once per
+   * simulateMonth() invocation, so multi-month catch-ups (lag spikes,
+   * offline progression) flip the correct number of times.
    */
   private tickDayNight() {
-    const absoluteMonth =
-      this.state.time.gameYear * 12 + this.state.time.gameMonth;
-    if (absoluteMonth === this.state.lastDayNightFlipMonth) return;
-
     if (this.state.dayNight === "day") {
       this.state.dayNight = "night";
       processNightSleep(this.state, this.state.grid, this.state.buildings);
@@ -293,7 +291,8 @@ export class GameEngine {
       this.state.dayNight = "day";
       processDayWake(this.state);
     }
-    this.state.lastDayNightFlipMonth = absoluteMonth;
+    this.state.lastDayNightFlipMonth =
+      this.state.time.gameYear * 12 + this.state.time.gameMonth;
   }
 
   private buildBiomePatterns() {
