@@ -48,9 +48,11 @@ export function createDefaultCivilization(grid: Grid): CivilizationState {
   return {
     population: 4,
     treasury: 80,
-    resources: { wheat: 0, bread: 8, wood: 30, stone: 20, gold: 80 },
+    // Phase 11 v8: bread reserve bumped 8 → 60 (~10 months of food at pop 6)
+    // so a fresh realm has time to build farms/bakeries before starving.
+    resources: { wheat: 0, bread: 60, wood: 30, stone: 20, gold: 80 },
     needs: {
-      hunger: { value: 25, weight: 2.4, decay: 4 },
+      hunger: { value: 0, weight: 2.4, decay: 4 },
       safety: { value: 40, weight: 2.0, decay: 3 },
       social: { value: 15, weight: 1.0, decay: 1.5 },
       vanity: { value: 10, weight: 0.7, decay: 1 },
@@ -130,9 +132,12 @@ export function tickCivilizationMonth(
   res.bread -= breadEaten;
   const hungerReduction = (breadEaten / Math.max(1, breadDemand)) * 25;
   collectiveSatisfaction.hunger = (collectiveSatisfaction.hunger ?? 0) + hungerReduction;
-  // Starvation increases hunger sharply
+  // Starvation increases hunger. Phase 11 v8: rate cut from *8 to *3 per
+  // bread-deficit unit so a brief food shortage doesn't peg civic hunger to
+  // 100 within a few months. The realm now has roughly 3x longer to build
+  // farms/bakeries before the panel turns red.
   if (breadEaten < breadDemand) {
-    civ.needs.hunger.value = Math.min(100, civ.needs.hunger.value + (breadDemand - breadEaten) * 8);
+    civ.needs.hunger.value = Math.min(100, civ.needs.hunger.value + (breadDemand - breadEaten) * 3);
   }
 
   // Pass C: housing surplus reduces safety
@@ -145,6 +150,12 @@ export function tickCivilizationMonth(
 
   // Pass D: collect taxes
   civ.treasury += monthTaxes;
+  // Phase 11 hardening: defensively clamp the treasury to a non-negative
+  // integer at the canonical end-of-month tick. All known decrements
+  // (rogue theft, building costs) are already guarded at their call site,
+  // but this floor + max(0) belt-and-braces guarantees no future code path
+  // can ever leave the realm in debt or with fractional gold.
+  civ.treasury = Math.max(0, Math.floor(civ.treasury));
   res.gold = civ.treasury;
 
   // Pass E: apply satisfaction then decay

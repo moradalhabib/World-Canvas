@@ -1,0 +1,48 @@
+Going all in. I love it. Combining all three systems—Genetics, Psychology, and Contagion—transforms your simulation from a top-down resource manager into an emergent storytelling engine.
+
+Because we are injecting three massive logic loops at once, we need to instruct the Agent to handle the performance carefully. The "Rumor Mill" in particular requires NPCs to check their distance to other NPCs constantly. If not optimized, this can tank the mobile framerate we just worked so hard to secure.
+
+Here is the ultimate master prompt to deploy the Societal Fabric Engine.
+
+[COPY EVERYTHING BELOW THIS LINE FOR REPLIT]
+
+Phase 12: The Societal Fabric Engine (Genetics, Psychology, Contagion)
+Acknowledge this prompt. We are implementing the final layers of NPC depth: Families, Moods, and Social Contagion. Append this logic into the existing Phase 11 hardened engine without breaking the Phase 10 isometric rendering or the 60 FPS performance baseline.
+
+1. Family Houses & Inherited Genetics:
+
+Establish a global array of lastNames (e.g., Baker, Smith, Iron, Crown).
+
+At initial spawn, assign a random lastName to each citizen.
+
+Breeding Logic Update: When two adults breed, the new 'Child' NPC inherits the lastName of one parent.
+
+Genetic Traits: The child has a 50% probability of inheriting a trait (Zealot, Greedy, etc.) from one of the parents. Otherwise, it is randomized.
+
+2. The Psychology Engine (Mood & Mental Breaks):
+
+Add a mood integer (0-100, default 100) to the Citizen class.
+
+Modifiers: Hunger > 80 drains Mood. Safety < 20 (sleeping outside) drains Mood. Reaching Skill Level 10 grants a permanent passive Mood buff.
+
+Mental Breaks: If mood == 0, the NPC enters a MENTAL_BREAK state. The behavior depends on their Trait:
+
+Zealot: Becomes a 'Doomsayer'. Stops working, wanders, and drains the Faith of any nearby citizens.
+
+Coward: Becomes a 'Recluse'. Runs inside the nearest house and refuses to exit or work for 3 game-months.
+
+Greedy: Becomes a 'Thief'. Pathfinds to the Treasury and steals 100 Gold, converting it to personal Vanity, before their mood resets.
+
+3. The Rumor Mill (Social Contagion):
+
+Optimization Requirement: To prevent O(N^2) lag, only run proximity checks for the Rumor Mill every 60 ticks (1 second), not every frame.
+
+Interaction: If two NPCs in the IDLE or MOVING state pass within 2 tiles of each other, they have a 10% chance to enter a CHATTING state for 2 seconds (visualized by a tiny ellipsis ... speech bubble above their heads).
+
+Contagion Logic: During a chat, if NPC A is a REBEL and NPC B is a ROYALIST, there is a 25% chance NPC B's individual Dissent score increases. If NPC A is a HERETIC, NPC B loses Faith. Rumors and rebellion now spread geographically.
+
+4. UI & Inspection Updates:
+
+Update the NPC tap-to-inspect UI. It must now display: Full Name (e.g., John Baker), a visual Mood Bar, and their current micro-state (e.g., "Working", "Chatting", "Mental Break").
+
+Instruction: Confirm understanding. Provide the updated JavaScript. Ensure the distance math for the Rumor Mill is optimized and does not crash the render loop.

@@ -328,7 +328,7 @@ export class GameEngine {
           this.state.buildings,
           this.state.civilization
         );
-        // Phase 11: After every yearly royalty tick, guarantee a living
+        // Phase 10.7: After every yearly royalty tick, guarantee a living
         // monarch — if succession somehow leaves the throne empty, the
         // highest-Vanity surviving adult is acclaimed so the game can
         // never permanently soft-lock on a no-heir extinction event.
@@ -337,6 +337,31 @@ export class GameEngine {
         safety++;
       }
       this.state.lastRoyalYearTicked = target;
+
+      // Phase 11 hardening — Dead NPC garbage collection.
+      // Citizens who have been DEAD for more than DEAD_GRACE_YEARS are
+      // removed from the active citizens[] array entirely. This:
+      //   • prevents unbounded array growth over centuries of play
+      //     (every per-frame loop over citizens stays O(living))
+      //   • keeps the gravestone visual on screen for the grace period so
+      //     the player still sees recent fatalities
+      //   • is safe for lineage: findHeirs() iterates living children, so
+      //     GC'ing a long-dead parent never breaks succession
+      const DEAD_GRACE_YEARS = 10;
+      const cutoff = this.state.time.gameYear - DEAD_GRACE_YEARS;
+      const before = this.state.citizens.length;
+      this.state.citizens = this.state.citizens.filter(
+        (c) => c.state !== "DEAD" || (c.deathYear ?? this.state.time.gameYear) > cutoff
+      );
+      const removed = before - this.state.citizens.length;
+      if (removed > 0) {
+        // Composite-sprite cache may now reference stale citizen IDs; clear
+        // any orphans so the FIFO buffer doesn't carry dead weight.
+        const liveIds = new Set(this.state.citizens.map((c) => c.id));
+        for (const id of [...this.compositeSprites.keys()]) {
+          if (!liveIds.has(id)) this.compositeSprites.delete(id);
+        }
+      }
     }
 
     // Phase 6: Day/Night flip — alternates each in-game month. Triggers the
@@ -1504,13 +1529,83 @@ export class GameEngine {
         continue;
       }
 
+      /* ---------- Phase 12: 8-directional facing + walk cycle ----------
+       * Stateless — derive facing each frame from the vector to the next
+       * path tile. Compass bins (45° sectors): 0=N, 1=NE, 2=E, 3=SE,
+       * 4=S, 5=SW, 6=W, 7=NW. When idle, default to S (face camera).
+       * PRAYING / SLEEPING citizens stay axis-aligned (face camera).
+       *
+       * The facing wraps the legs+arms+sprite as one transformed group:
+       *   • flipSign  → mirror W-side facings horizontally
+       *   • squashAbs → narrow silhouette for E/W to suggest a side-on
+       *                 profile without needing a separate sprite asset
+       *   • tiltRad   → small body lean in the direction of motion
+       *   • bobY      → vertical body bob locked to the gait sine, only
+       *                 applied while actually moving so they look like
+       *                 they're physically walking, not sliding. */
+      let facing: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 = 4;
+      const stillStates = c.state === "PRAYING" || c.state === "SLEEPING";
+      if (!stillStates && c.path.length > 0 && c.pathIndex < c.path.length) {
+        const nxt = c.path[c.pathIndex];
+        const dr = nxt.row - c.row;
+        const dc = nxt.col - c.col;
+        if (dr !== 0 || dc !== 0) {
+          // atan2(dc, -dr): row+ is south on screen, so we negate dr to
+          // recover a true compass where 0° = N and 90° = E.
+          let deg = (Math.atan2(dc, -dr) * 180) / Math.PI;
+          if (deg < 0) deg += 360;
+          facing = (Math.round(deg / 45) % 8) as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+        }
+      }
+      const flipSign = facing === 5 || facing === 6 || facing === 7 ? -1 : 1;
+      const tiltDeg =
+        facing === 2 ? -12 : facing === 6 ? 12 :
+        facing === 1 ? -8  : facing === 7 ? 8  :
+        facing === 3 ? -5  : facing === 5 ? 5  : 0;
+      const squashAbs =
+        facing === 2 || facing === 6 ? 0.85 :
+        facing === 1 || facing === 3 || facing === 5 || facing === 7 ? 0.95 : 1;
+      const tiltRad = (tiltDeg * Math.PI) / 180;
+      // Body bob: |sin| gives a "double-step" bounce — feet lift twice per
+      // gait cycle, like a real walk. Negative = upward in screen-space.
+      const bobY = isMoving ? -Math.abs(Math.sin(t * 8 + gaitPhase)) * ts * 0.03 : 0;
+
+      // Arm geometry: drawn live (not in cached sprite) so they swing.
+      // Arms swing OPPOSITE to legs for a believable cross-gait.
+      const armSwing = isMoving ? -swing * ts * 0.08 : 0;
+      const armColor =
+        c.socialTier === "king"   ? "#5e0b10" :
+        c.socialTier === "noble"  ? "#502c7a" :
+                                    "#5a4a32";
+      const armW = ts * 0.07;
+      const armH = ts * 0.20;
+      const shoulderY = cy - ts * 0.05;
+      const armOuterX = ts * 0.20; // distance from cx to arm center
+
+      // Apply facing transform around the feet anchor so rotation pivots
+      // at the ground (figure leans, doesn't slide off the tile).
+      ctx.save();
+      const feetY = cy + ts * 0.32;
+      ctx.translate(cx, feetY);
+      ctx.scale(flipSign * squashAbs, 1);
+      ctx.rotate(tiltRad);
+      ctx.translate(-cx, -feetY + bobY);
+
       // Legs (drawn first so body overlaps the tops cleanly)
       ctx.fillStyle = legColor;
       ctx.fillRect(cx - legW - ts * 0.01, legY + offsetA, legW, legH);
       ctx.fillRect(cx + ts * 0.01,        legY + offsetB, legW, legH);
 
+      // Arms — front pair (drawn behind body so the body sprite covers
+      // the shoulder root), each swinging opposite to its same-side leg.
+      ctx.fillStyle = armColor;
+      ctx.fillRect(cx - armOuterX - armW * 0.5, shoulderY + armSwing, armW, armH);
+      ctx.fillRect(cx + armOuterX - armW * 0.5, shoulderY - armSwing, armW, armH);
+
       // Body + head sprite
       ctx.drawImage(sprite, dx, dy);
+
+      ctx.restore();
 
       /* ---------- ROGUE: pulsing red overhead circle ---------- */
       if (c.state === "ROGUE") {
@@ -2390,6 +2485,7 @@ export class GameEngine {
           const a = Math.random() * Math.PI * 2;
           const sp = 0.04 + Math.random() * 0.06; // px/ms
           this.sparks.push({
+            kind: "spark",
             x: midX,
             y: midY,
             vx: Math.cos(a) * sp * ts,
@@ -2943,10 +3039,6 @@ export class GameEngine {
         life: 700, maxLife: 700,
       });
     }
-  }
-
-  public setTimeScale(scale: 0 | 1 | 2) {
-    this.state.time.timeScale = scale;
   }
 
   public save() {

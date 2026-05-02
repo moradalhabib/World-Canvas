@@ -1,0 +1,43 @@
+Phase 13: The Dynamic Climate & Ecosystem Engine
+Acknowledge this prompt. We are implementing an autonomous seasonal cycle and a dynamic weather particle system. Append this logic into the existing Phase 12 engine without breaking the isometric rendering or dropping the mobile framerate.
+
+1. The Seasonal Macro-Cycle:
+
+Map the existing game months to Seasons: (Mar-May: Spring, Jun-Aug: Summer, Sep-Nov: Autumn, Dec-Feb: Winter).
+
+Visual Overlays: Apply a subtle fullscreen canvas color tint based on the season to shift the atmosphere (Spring: slight pink/green tint; Summer: bright/warm yellow tint; Autumn: orange/brown tint; Winter: cool blue/grey tint).
+
+Mechanical Impact:
+
+Spring/Autumn: Farmer food yield is multiplied by 1.5x (Harvest/Planting).
+
+Winter: Farmer food yield drops to 0. NPCs suffer a constant Mood drain due to the cold, which is doubled if their Safety is low (homeless).
+
+2. The Weather Micro-Cycle (State Machine):
+
+Create a currentWeather state (CLEAR, RAIN, SNOW, THUNDERSTORM).
+
+Every new game-day, calculate a new weather state based on the season (e.g., Snow is only possible in Winter; Thunderstorms are common in Summer; Rain is common in Spring).
+
+3. Lightweight Particle Engine (Visuals):
+
+Build a highly optimized particle array rendered over the dynamic entity layer. Cap particles at 200 maximum to ensure 60 FPS on mobile.
+
+Rain: Fast, steeply angled semi-transparent blue/white lines (ctx.beginPath, ctx.lineTo).
+
+Snow: Slow, drifting white circles (ctx.arc) with a slight sine-wave wobble on the x-axis.
+
+Thunderstorm: Rain particles + a 1% chance every tick to trigger a 'Lightning Flash' (momentarily filling the screen with an 80% opacity white overlay) followed by a delayed, deep rumble sound (if audio is enabled, otherwise just the flash).
+
+4. Deep Logic Integration:
+
+Wet & Miserable: If it is Rain or Snow, NPC movement speed drops by 10%, and their Mood drain accelerates slightly unless they are inside a building.
+
+Lightning Strikes: During a Thunderstorm, there is a very rare chance for lightning to strike a random tile. If an NPC is adjacent, their Mood instantly drops to 0 (Traumatized) and they flee.
+
+Instruction: Confirm understanding. Provide the updated JavaScript logic. Pay special attention to the particle engine's garbage collection—ensure raindrops/snowflakes are immediately removed from the array when they pass the bottom of the canvas.
+
+What this will do to your world:
+Once the Agent compiles this, your NPCs will no longer just be working in a static terrarium.
+
+When Autumn hits, you will see the screen tint orange and your farmers will pull in massive harvests. When Winter follows, the snow particles will fall, crops will die, and your NPCs will visibly slow down and suffer mood drops if they don't have houses. If a thunderstorm hits in Summer, you might see lightning traumatize a peasant, sending them into a mental break.

@@ -1,0 +1,36 @@
+Phase 14: The Living City Expansion (Crime, Medicine, & Leisure)
+Acknowledge this prompt. We are injecting a massive layer of emergent gameplay by adding Law, Plagues, and Social Hubs. These systems must interlock with our existing phases (Seasons, Mood, Rumors) without breaking the 60 FPS isometric engine.
+
+1. Crime & Law (The Dungeon):
+
+Add a hidden Morality integer (0-100) to citizens. (Trait modifiers: Greedy has lower base morality, Zealot has high).
+
+The Crime: If an NPC is starving (Hunger > 90) or their Mood hits 0, they have a chance to enter a STEALING state, pathfinding to another citizen's house or the Treasury to steal resources.
+
+The Law: If a Guard is within 5 tiles of a STEALING NPC, the Guard enters an ARRESTING state. They pathfind to the thief and teleport them to a new building: The Dungeon.
+
+Prisoners: NPCs in the Dungeon have their state locked to IMPRISONED. They consume basic food but do not work. (Add a God Power later to Execute or Pardon them).
+
+2. The Medical Engine (Plagues & Healers):
+
+Add a Health stat (0-100, default 100).
+
+The Plague: During Winter, or if Hunger > 80, there is a small chance an NPC gains the SICK status. Sickness drains Health, slows movement by 50%, and causes a green particle effect above their head.
+
+Contagion: Hook this into the Phase 12 Rumor Mill proximity logic. If a SICK NPC passes within 2 tiles of a healthy one, there is a 15% chance the sickness spreads.
+
+The Doctor: Create a new profession (Doctor) and a new building (Apothecary). Doctors do not farm; their utility brain prioritizes pathfinding to SICK NPCs to restore their Health and remove the status.
+
+3. The Social Hub (The Tavern):
+
+Add a Leisure need to the Civic Needs panel.
+
+The Building: Create a new large isometric building: The Tavern.
+
+The Behavior: At the end of the day cycle (dusk), instead of going straight to SLEEPING, off-duty NPCs have a high probability to pathfind to the Tavern. Spending time in the Tavern rapidly restores Mood and Leisure.
+
+The Super-Spreader Risk: Because the Tavern packs many NPCs into one tile radius, the proximity checks for the Rumor Mill (Phase 12) and Plagues (Phase 14) happen twice as fast here. Rebellions and diseases will spread like wildfire if left unchecked.
+
+Instruction: Confirm understanding. Provide the updated JavaScript. You must heavily optimize the pathfinding and proximity checks for the Tavern to ensure the collision math doesn't lag the mobile browser when 20 NPCs are in the same building.
+
+Once the Replit Agent deploys this, your simulation is practically complete. You will need to watch your town very closely—a single sick thief going to the tavern could bring your entire dynasty to its knees. Let me know how the Agent handles this massive logic injection!

@@ -17,8 +17,14 @@ const SAVE_KEY = "god_sim_state";
  *  v5: + Phase 6 lifecycle (safety, vanity, day/night, REBEL/SLEEPING).
  *  v6: + Phase 5 Divine Powers (crater tile, building.status, winterActive).
  *  v7: + Phase 11 balance pass — one-shot hunger reset on load + empty-throne
- *       failsafe applied via ensureMonarch(). */
-const CURRENT_VERSION = 7;
+ *       failsafe applied via ensureMonarch().
+ *  v8: + Bread economy hotfix — Phase 11 v7 only zeroed PER-CITIZEN hunger but
+ *       the panel reads CIVIC needs.hunger.value, which still pegged to 100
+ *       within 4 months because starting state has bread:8/wheat:0/no farms.
+ *       v8 also zeros civ.needs.hunger.value, tops up the bread reserve, and
+ *       recenters the camera on spawn so off-screen NPCs become visible again.
+ */
+const CURRENT_VERSION = 8;
 const INITIAL_CITIZEN_COUNT = 6;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;
@@ -196,9 +202,10 @@ export function loadState(): GameState | null {
     if (!raw) return null;
     const s: SerializedState = JSON.parse(raw);
 
-    // v7 is current. We migrate from v2 (no citizens), v3 (no royalty),
+    // v8 is current. We migrate from v2 (no citizens), v3 (no royalty),
     // v4 (no Phase-6 lifecycle/day-night), v5 (no Phase-5 winter/rubble/crater),
-    // and v6 (Phase 11 balance pass: zero hunger + empty-throne failsafe).
+    // v6 (Phase 11 balance pass: zero per-citizen hunger + empty-throne failsafe),
+    // and v7 (bread economy hotfix: zero civic hunger, top up bread, recenter cam).
     // Older versions are discarded.
     if (
       s.version !== CURRENT_VERSION &&
@@ -206,7 +213,8 @@ export function loadState(): GameState | null {
       s.version !== 3 &&
       s.version !== 4 &&
       s.version !== 5 &&
-      s.version !== 6
+      s.version !== 6 &&
+      s.version !== 7
     ) {
       return null;
     }
@@ -218,6 +226,7 @@ export function loadState(): GameState | null {
     let citizens: Citizen[];
     if (
       (s.version === CURRENT_VERSION ||
+        s.version === 7 ||
         s.version === 6 ||
         s.version === 5 ||
         s.version === 4 ||
@@ -270,6 +279,41 @@ export function loadState(): GameState | null {
         if (c.state !== "DEAD") c.hunger = 0;
       }
       ensureMonarch(state);
+    }
+
+    // v7 → v8: Bread economy hotfix.
+    //   1) Re-zero PER-CITIZEN hunger (defensive — repeats v6→v7 logic for
+    //      saves that have continued to drift).
+    //   2) Zero CIVIC needs.hunger.value — this is what the Civic Needs panel
+    //      reads, and v6→v7 missed it. Without this, panels still show 100.
+    //   3) Top up the bread reserve to at least 60 loaves (~10 months of food
+    //      at population 6) so the realm doesn't immediately re-spiral while
+    //      the player is testing the new walk-cycle visuals.
+    //   4) Recenter the camera on the civ founding tile so any NPCs that had
+    //      wandered off-screen are immediately visible after the migration.
+    if (s.version === 6 || s.version === 7) {
+      for (const c of state.citizens) {
+        if (c.state !== "DEAD") c.hunger = 0;
+      }
+      if (state.civilization.needs?.hunger) {
+        state.civilization.needs.hunger.value = 0;
+      }
+      const res = state.civilization.resources;
+      if ((res.bread ?? 0) < 60) res.bread = 60;
+      // Force-recenter camera on the founded tile at a comfortable zoom so
+      // citizens that had wandered are visible immediately on next render.
+      const founded = state.civilization.founded;
+      const ts = state.grid.tileSize;
+      const focusX = founded.col * ts + ts / 2;
+      const focusY = founded.row * ts + ts / 2;
+      // Note: viewW/viewH not known here (engine sets them on init). We just
+      // place the camera so the focus point is at world origin offset; the
+      // engine's clampCamera() runs after construction and will keep it sane.
+      // Use a reasonable default zoom (1.5x) — engine's first frame will not
+      // override because (x,y,zoom) are no longer all defaults.
+      state.camera.zoom = 1.5;
+      state.camera.x = focusX - 400;
+      state.camera.y = focusY - 300;
     }
 
     return state;
