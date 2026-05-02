@@ -152,9 +152,11 @@ export class GameEngine {
       this.state.buildings.push(newBuilding);
     }
 
-    // Phase 3: tick each citizen's brain — rises hunger, plans SEEK_FOOD path.
+    // Phase 3: tick each citizen's brain — hunger rises, crisis branch fires
+    // (PRAYING / ROGUE), the death timer counts down, and SEEK_FOOD/ROGUE
+    // citizens replan their A* path when they don't already have one.
     for (const c of this.state.citizens) {
-      tickCitizenMonth(c, this.state.grid, this.state.buildings);
+      tickCitizenMonth(c, this.state.grid, this.state.buildings, this.state.civilization);
     }
   }
 
@@ -398,6 +400,9 @@ export class GameEngine {
     const radius = ts * 0.18;
     const borderWidth = Math.max(1, ts * 0.04);
 
+    // Sub-second pulse for praying-halo / rogue-outline shimmer
+    const t = performance.now() / 1000;
+
     for (const c of this.state.citizens) {
       const pos = getCitizenVisualPos(c);
       // Cull off-screen (with 1-tile margin so we don't pop in/out at edges)
@@ -407,13 +412,43 @@ export class GameEngine {
       const cx = pos.col * ts + ts * 0.5;
       const cy = pos.row * ts + ts * 0.5;
 
+      /* ---------- DEAD: render as a stone gravestone, then skip ---------- */
+      if (c.state === "DEAD") {
+        const w = radius * 1.4;
+        const h = radius * 2.0;
+        const top = cy - h * 0.55;
+        // Ground shadow
+        ctx.fillStyle = "rgba(0, 0, 0, 0.40)";
+        ctx.beginPath();
+        ctx.ellipse(cx, cy + h * 0.45, w * 0.9, radius * 0.35, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Stone slab — rounded top
+        ctx.fillStyle = "#6f7480";
+        ctx.beginPath();
+        ctx.moveTo(cx - w / 2, cy + h * 0.45);
+        ctx.lineTo(cx - w / 2, top + w / 2);
+        ctx.arc(cx, top + w / 2, w / 2, Math.PI, 0);
+        ctx.lineTo(cx + w / 2, cy + h * 0.45);
+        ctx.closePath();
+        ctx.fill();
+        // Subtle highlight
+        ctx.fillStyle = "rgba(255, 255, 255, 0.12)";
+        ctx.fillRect(cx - w / 2 + w * 0.1, top + w * 0.5, w * 0.18, h * 0.7);
+        // Carved cross
+        ctx.fillStyle = "#2c3038";
+        const crossW = w * 0.16;
+        ctx.fillRect(cx - crossW / 2, top + w * 0.55, crossW, h * 0.55);
+        ctx.fillRect(cx - w * 0.30, top + w * 0.7, w * 0.6, crossW);
+        continue;
+      }
+
       // Soft drop shadow on the ground beneath the citizen
       ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
       ctx.beginPath();
       ctx.ellipse(cx, cy + radius * 0.7, radius * 0.9, radius * 0.35, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Hungry-target line (yellow dashed) — only when zoomed in enough
+      /* ---------- Pathfinding line (yellow dashed) for SEEK_FOOD ---------- */
       if (c.state === "SEEK_FOOD" && c.targetTile && cam.zoom > 0.6) {
         const tx = c.targetTile.col * ts + ts * 0.5;
         const ty = c.targetTile.row * ts + ts * 0.5;
@@ -427,6 +462,34 @@ export class GameEngine {
         ctx.setLineDash([]);
       }
 
+      /* ---------- ROGUE pathfinding line (red dashed) ---------- */
+      if (c.state === "ROGUE" && c.targetTile && cam.zoom > 0.6) {
+        const tx = c.targetTile.col * ts + ts * 0.5;
+        const ty = c.targetTile.row * ts + ts * 0.5;
+        ctx.strokeStyle = "rgba(255, 60, 60, 0.7)";
+        ctx.lineWidth = Math.max(1, 1.8 / cam.zoom);
+        ctx.setLineDash([ts * 0.10, ts * 0.06]);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(tx, ty);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      /* ---------- PRAYING golden halo (pulsing) ---------- */
+      if (c.state === "PRAYING") {
+        const pulse = 0.6 + 0.25 * Math.sin(t * 3 + c.hue);
+        const haloR = radius * (1.9 + 0.15 * Math.sin(t * 3 + c.hue));
+        const grad = ctx.createRadialGradient(cx, cy, radius * 0.4, cx, cy, haloR);
+        grad.addColorStop(0, `rgba(255, 240, 170, ${0.55 * pulse})`);
+        grad.addColorStop(0.6, `rgba(255, 220, 120, ${0.25 * pulse})`);
+        grad.addColorStop(1, "rgba(255, 220, 120, 0)");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
       // Body — saturated, bright, hue-rotated
       const fill = `hsl(${c.hue}, 75%, 55%)`;
       ctx.fillStyle = fill;
@@ -434,18 +497,32 @@ export class GameEngine {
       ctx.arc(cx, cy, radius, 0, Math.PI * 2);
       ctx.fill();
 
-      // White border for contrast against any biome
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = borderWidth;
+      /* ---------- Border: white normally, red+thick for ROGUE ---------- */
+      if (c.state === "ROGUE") {
+        ctx.strokeStyle = "#ff2d2d";
+        ctx.lineWidth = borderWidth * 1.8;
+      } else {
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = borderWidth;
+      }
       ctx.stroke();
 
-      // SEEK_FOOD alert ring — pulsing-ish orange outer halo
+      /* ---------- SEEK_FOOD alert ring (orange) ---------- */
       if (c.state === "SEEK_FOOD") {
         ctx.strokeStyle = "rgba(255, 130, 30, 0.85)";
         ctx.lineWidth = borderWidth * 0.9;
         ctx.beginPath();
         ctx.arc(cx, cy, radius * 1.55, 0, Math.PI * 2);
         ctx.stroke();
+      }
+
+      /* ---------- Tiny prayer mark above PRAYING citizens ---------- */
+      if (c.state === "PRAYING" && cam.zoom > 0.6) {
+        ctx.fillStyle = "rgba(255, 245, 200, 0.95)";
+        ctx.font = `${Math.max(10, ts * 0.32)}px serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillText("✝", cx, cy - radius * 1.6);
       }
     }
   }
@@ -679,8 +756,10 @@ export class GameEngine {
     const ts = this.state.time.timeScale;
     if (ts === 0) return;
     const buildings = this.state.buildings;
-    for (const c of this.state.citizens) {
-      updateCitizenMovement(c, dtMs, ts, buildings);
+    const all = this.state.citizens;
+    const civ = this.state.civilization;
+    for (const c of all) {
+      updateCitizenMovement(c, dtMs, ts, buildings, all, civ);
     }
   }
 

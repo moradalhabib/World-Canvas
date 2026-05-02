@@ -7,7 +7,7 @@ import type {
   TileType,
 } from "./types";
 import { createDefaultCivilization } from "./civilization";
-import { spawnInitialCitizens } from "./npc";
+import { normalizeCitizens, spawnInitialCitizens } from "./npc";
 
 const SAVE_KEY = "god_sim_state";
 /** v1: terrain only. v2: + buildings + civilization. v3: + citizens. */
@@ -177,7 +177,9 @@ export function loadState(): GameState | null {
 
     let citizens: Citizen[];
     if (s.version === CURRENT_VERSION && Array.isArray(s.citizens)) {
-      citizens = s.citizens;
+      // Backfill any fields added in mid-version code changes (e.g. faith,
+      // crisisTimer) so save data from earlier dev builds keeps working.
+      citizens = normalizeCitizens(s.citizens);
     } else {
       // v2 → v3 migration: spawn fresh citizens around the existing town.
       citizens = spawnInitialCitizens(grid, civilization.founded, INITIAL_CITIZEN_COUNT);

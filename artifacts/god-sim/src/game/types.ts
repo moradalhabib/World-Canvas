@@ -213,19 +213,18 @@ export interface CivilizationState {
 /*  Phase 3: Citizens (NPCs) — utility AI + pathfinding                       */
 /* ========================================================================== */
 
-export type CitizenState = "IDLE" | "MOVING" | "SEEK_FOOD" | "WORKING";
+export type CitizenState =
+  | "IDLE"
+  | "MOVING"
+  | "SEEK_FOOD"
+  | "PRAYING"
+  | "ROGUE"
+  | "DEAD"
+  | "WORKING";
 
 export interface PathStep {
   row: number;
   col: number;
-}
-
-export interface CitizenNeeds {
-  hunger: number;
-  safety: number;
-  social: number;
-  vanity: number;
-  faith: number;
 }
 
 export interface Citizen {
@@ -243,8 +242,12 @@ export interface Citizen {
   targetTile?: { row: number; col: number };
   /** ID of building being targeted (so we can still look it up after arriving). */
   targetBuildingId?: string;
-  /** Personal needs (parallel to civ-level needs). */
-  needs: CitizenNeeds;
+  /** 0..100. Starts at 0, rises every month, drives SEEK_FOOD / crisis. */
+  hunger: number;
+  /** 0..100, randomized per citizen. Determines crisis branch (PRAYING vs ROGUE). */
+  faith: number;
+  /** Months spent in PRAYING or ROGUE since the crisis began. > 2 → DEAD. */
+  crisisTimer: number;
   /** Hue rotation for visual variation (0..359). */
   hue: number;
 }
