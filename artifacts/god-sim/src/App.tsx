@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { GameEngine } from "./game/GameEngine";
 import type { CitizenTapInfo } from "./game/GameEngine";
-import type { Citizen, CivilizationState, GameState } from "./game/types";
+import type { ChronicleEntry, Citizen, CivilizationState, GameState } from "./game/types";
 import { ALL_NEEDS, NEED_COLORS, NEED_LABELS } from "./game/types";
 
 /**
@@ -49,6 +49,9 @@ export default function App() {
   const [buildingCount, setBuildingCount] = useState(0);
   const [citizenCount, setCitizenCount] = useState(0);
   const [hungryCount, setHungryCount] = useState(0);
+  const [chronicle, setChronicle] = useState<ChronicleEntry[]>([]);
+  const [nobleDissent, setNobleDissent] = useState<GameState["nobleDissent"]>("LOW");
+  const [dayNight, setDayNight] = useState<GameState["dayNight"]>("day");
   // Phase 4: Inner Monologue overlay state.
   const [monologue, setMonologue] = useState<{
     citizen: Citizen;
@@ -100,6 +103,9 @@ export default function App() {
     setBuildingCount(state.buildings.length);
     setCitizenCount(state.citizens.length);
     setHungryCount(state.citizens.filter((cz) => cz.state === "SEEK_FOOD").length);
+    setChronicle(state.chronicle.slice(-6).reverse());
+    setNobleDissent(state.nobleDissent);
+    setDayNight(state.dayNight);
   }, []);
 
   useEffect(() => {
@@ -114,6 +120,9 @@ export default function App() {
     setBuildingCount(s.buildings.length);
     setCitizenCount(s.citizens.length);
     setHungryCount(s.citizens.filter((cz) => cz.state === "SEEK_FOOD").length);
+    setChronicle(s.chronicle.slice(-6).reverse());
+    setNobleDissent(s.nobleDissent);
+    setDayNight(s.dayNight);
     return () => {
       engine.destroy();
       engineRef.current = null;
@@ -135,6 +144,36 @@ export default function App() {
       <div className="hud-top">
         <div className="hud-time">
           <span className="hud-date">{monthLabel} Year {gameYear}</span>
+          <span
+            className="hud-daynight"
+            title={dayNight === "night" ? "Night — citizens sleep" : "Day"}
+            style={{
+              marginLeft: 8,
+              padding: "2px 8px",
+              borderRadius: 10,
+              fontSize: 11,
+              background: dayNight === "night" ? "#1a1f3a" : "#fef3c7",
+              color: dayNight === "night" ? "#c4d4ff" : "#92400e",
+            }}
+          >
+            {dayNight === "night" ? "☾ NIGHT" : "☀ DAY"}
+          </span>
+          {nobleDissent !== "LOW" && (
+            <span
+              className="hud-dissent"
+              title={`Noble dissent: ${nobleDissent}`}
+              style={{
+                marginLeft: 8,
+                padding: "2px 8px",
+                borderRadius: 10,
+                fontSize: 11,
+                background: nobleDissent === "HIGH" ? "#7f1d1d" : "#78350f",
+                color: "#fee2e2",
+              }}
+            >
+              ⚔ {nobleDissent} DISSENT
+            </span>
+          )}
         </div>
 
         {civ && (
@@ -244,6 +283,59 @@ export default function App() {
             <div className="monologue-text">"{buildMonologue(monologue.citizen)}"</div>
             <div className="monologue-hint">tap anywhere to dismiss</div>
           </div>
+        </div>
+      )}
+
+      {/* Right: Chronicle panel */}
+      {chronicle.length > 0 && (
+        <div
+          className="hud-chronicle"
+          style={{
+            position: "absolute",
+            top: 80,
+            right: 12,
+            width: 260,
+            maxHeight: 240,
+            overflowY: "auto",
+            background: "rgba(10, 14, 28, 0.85)",
+            border: "1px solid rgba(180, 160, 100, 0.35)",
+            borderRadius: 6,
+            padding: "10px 12px",
+            color: "#e8d8a8",
+            fontSize: 12,
+            fontFamily: "Georgia, serif",
+            backdropFilter: "blur(4px)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: 1.5,
+              color: "#f4cf5b",
+              marginBottom: 8,
+              textTransform: "uppercase",
+              borderBottom: "1px solid rgba(180, 160, 100, 0.25)",
+              paddingBottom: 4,
+            }}
+          >
+            ✦ Royal Chronicle
+          </div>
+          {chronicle.map((e, i) => (
+            <div
+              key={`${e.year}-${e.month}-${i}`}
+              style={{
+                marginBottom: 8,
+                lineHeight: 1.35,
+                opacity: 1 - i * 0.12,
+              }}
+            >
+              <span style={{ color: "#a8a890", fontSize: 10, marginRight: 6 }}>
+                Y{e.year}
+              </span>
+              <span>{e.text}</span>
+            </div>
+          ))}
         </div>
       )}
 
