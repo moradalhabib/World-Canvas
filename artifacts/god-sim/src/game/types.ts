@@ -62,6 +62,40 @@ export interface GameState {
   currentWeather: WeatherKind;
   /** Absolute month index (year * 12 + month) at which weather was last re-rolled. */
   lastWeatherRollMonth: number;
+  /** Phase 16: ambient fauna (sheep). Lightweight per-frame entities, NOT
+   *  citizens — they have no needs, mood, or pathfinding. They wander grass
+   *  tiles and exist purely for "living world" visual richness. */
+  animals: Animal[];
+}
+
+/* ── Phase 16: Living World — fauna ── */
+
+export type AnimalKind = "sheep";
+
+/**
+ * Lightweight ambient fauna. Renders in the same depth-sorted scene queue
+ * as citizens (sortKey = row + col + 0.005, so they sit just below citizens
+ * on the same tile). Movement is a simple per-frame lerp toward `targetRow/
+ * targetCol` — NO grid pathfinding (animals only walk on grass/forest, and
+ * the wander step picks a valid neighbor or stays put).
+ */
+export interface Animal {
+  id: string;
+  kind: AnimalKind;
+  /** Logical tile (committed). */
+  row: number;
+  col: number;
+  /** Target tile we're lerping toward (== row/col when idle). */
+  targetRow: number;
+  targetCol: number;
+  /** 0..1 progress along the current step. */
+  progress: number;
+  /** 4-dir facing: 0=N, 1=E, 2=S, 3=W (matches NPC convention loosely). */
+  dir: 0 | 1 | 2 | 3;
+  /** Wall-clock ms until the next wander decision. */
+  nextWanderMs: number;
+  /** Wall-clock ms until grazing/idle pose ends. */
+  grazingUntilMs: number;
 }
 
 /* ── Phase 13: Dynamic Climate & Ecosystem Engine ── */
@@ -118,6 +152,70 @@ export const TILE_SPECKLE_COLORS: Record<TileType, [string, string]> = {
   snow: ["#ffffff", "#b5c2d1"],
   crater: ["#5c2a1a", "#1a0606"],
 };
+
+/**
+ * Phase 16: Season-aware tile palette overrides.
+ *   - Spring: lush vivid greens
+ *   - Summer: deep saturated baseline (== TILE_COLORS)
+ *   - Autumn: warm amber/rust grass + russet forest
+ *   - Winter: snow blanket on grass + frosted forest + frozen water tint
+ * Mountain / desert / crater are season-agnostic. Snow is always snow.
+ * Returns the FULL TileType record so the biome-pattern builder can switch
+ * palettes atomically without per-tile branching.
+ */
+export function getTileColorsForSeason(season: Season): Record<TileType, string> {
+  switch (season) {
+    case "SPRING":
+      return {
+        ...TILE_COLORS,
+        grass: "#5fa050",     // brighter spring green
+        forest: "#2d7d4f",    // fresh green
+      };
+    case "AUTUMN":
+      return {
+        ...TILE_COLORS,
+        grass: "#9b7a3c",     // amber/russet
+        forest: "#7a5028",    // burnt orange canopy
+      };
+    case "WINTER":
+      return {
+        ...TILE_COLORS,
+        grass: "#d8e2ec",     // snow-blanket grass
+        forest: "#6a7560",    // frosted dark green-gray
+        water: "#4a78a0",     // frozen-tinted water
+      };
+    case "SUMMER":
+    default:
+      return TILE_COLORS;
+  }
+}
+
+export function getTileSpecklesForSeason(season: Season): Record<TileType, [string, string]> {
+  switch (season) {
+    case "SPRING":
+      return {
+        ...TILE_SPECKLE_COLORS,
+        grass: ["#7ac065", "#4d8540"],
+        forest: ["#3a9a64", "#1f5630"],
+      };
+    case "AUTUMN":
+      return {
+        ...TILE_SPECKLE_COLORS,
+        grass: ["#c89a55", "#7a5a26"],
+        forest: ["#a06030", "#4a2810"],
+      };
+    case "WINTER":
+      return {
+        ...TILE_SPECKLE_COLORS,
+        grass: ["#ffffff", "#b5c2d1"],   // matches snow speckles
+        forest: ["#8a958a", "#3a4838"],
+        water: ["#6da4d0", "#2c5a86"],
+      };
+    case "SUMMER":
+    default:
+      return TILE_SPECKLE_COLORS;
+  }
+}
 
 export const SPECKLE_DENSITY: Record<TileType, number> = {
   grass: 60,

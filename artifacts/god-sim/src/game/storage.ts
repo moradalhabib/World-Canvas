@@ -1,15 +1,46 @@
 import type {
+  Animal,
   Building,
   ChronicleEntry,
   Citizen,
   CivilizationState,
   GameState,
+  Grid,
   Tile,
   TileType,
 } from "./types";
 import { createDefaultCivilization } from "./civilization";
 import { normalizeCitizens, spawnInitialCitizens } from "./npc";
 import { anointInitialKing, ensureMonarch, loadChronicle } from "./royalty";
+
+/** Phase 16: Spawn N sheep on random grass/forest tiles for fresh + migrated saves. */
+export function spawnInitialAnimals(grid: Grid, count: number): Animal[] {
+  const animals: Animal[] = [];
+  const candidates: Array<{ r: number; c: number }> = [];
+  for (let r = 0; r < grid.rows; r++) {
+    for (let c = 0; c < grid.cols; c++) {
+      const t = grid.tiles[r][c].type;
+      if (t === "grass" || t === "forest") candidates.push({ r, c });
+    }
+  }
+  if (candidates.length === 0) return animals;
+  for (let i = 0; i < count; i++) {
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    animals.push({
+      id: `sheep-${Date.now()}-${i}-${Math.floor(Math.random() * 9999)}`,
+      kind: "sheep",
+      row: pick.r,
+      col: pick.c,
+      targetRow: pick.r,
+      targetCol: pick.c,
+      progress: 0,
+      dir: (Math.floor(Math.random() * 4) as 0 | 1 | 2 | 3),
+      nextWanderMs: 0,
+      grazingUntilMs: 0,
+    });
+  }
+  return animals;
+}
 
 const SAVE_KEY = "god_sim_state";
 /** v1: terrain only. v2: + buildings + civilization. v3: + citizens.
@@ -36,8 +67,13 @@ const SAVE_KEY = "god_sim_state";
  *        states (STEALING, ARRESTING, IMPRISONED, HEALING, DRINKING).
  *        normalizeCitizens backfills the per-citizen fields; civ.needs.leisure
  *        is patched in below if absent.
+ *  v12: + Phase 16 Living World — adds GameState.animals (ambient sheep
+ *        fauna). Migration backfills `animals: []` THEN spawns 10 fresh
+ *        sheep on grass/forest tiles so the realm doesn't look lifeless
+ *        after upgrade. spawnInitialAnimals is called inside loadState
+ *        for any save older than v12.
  */
-const CURRENT_VERSION = 11;
+const CURRENT_VERSION = 12;
 const INITIAL_CITIZEN_COUNT = 6;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;
@@ -121,6 +157,8 @@ export function createDefaultState(): GameState {
     currentSeason: monthToSeason(1),
     currentWeather: "CLEAR",
     lastWeatherRollMonth: 1,
+    // Phase 16: seed 10 ambient sheep on grass/forest tiles.
+    animals: spawnInitialAnimals(grid, 10),
   };
   // Phase 3B: anoint the founding King + Queen and write the first chronicle.
   anointInitialKing(state);
@@ -187,6 +225,8 @@ interface SerializedState {
   currentSeason?: GameState["currentSeason"];
   currentWeather?: GameState["currentWeather"];
   lastWeatherRollMonth?: number;
+  /* Phase 16 */
+  animals?: Animal[];
 }
 
 /** Phase 13: deterministic season from game month (Mar-May Spring, etc.). */
@@ -225,6 +265,9 @@ export function saveState(state: GameState): void {
       currentSeason: state.currentSeason,
       currentWeather: state.currentWeather,
       lastWeatherRollMonth: state.lastWeatherRollMonth,
+      // Phase 16: persist sheep so they don't snap to fresh-spawn locations
+      // on reload. Each sheep is ~10 fields, so 10 sheep ≈ negligible.
+      animals: state.animals ?? [],
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(serialized));
   } catch (e) {
@@ -253,7 +296,8 @@ export function loadState(): GameState | null {
       s.version !== 7 &&
       s.version !== 8 &&
       s.version !== 9 &&
-      s.version !== 10 // Phase 13 saves migrate cleanly to Phase 14
+      s.version !== 10 && // Phase 13 saves migrate cleanly to Phase 14
+      s.version !== 11    // Phase 14 saves migrate cleanly to Phase 16
     ) {
       return null;
     }
@@ -265,6 +309,8 @@ export function loadState(): GameState | null {
     let citizens: Citizen[];
     if (
       (s.version === CURRENT_VERSION ||
+        s.version === 11 || // Phase 14 saves carry full citizen state — DO NOT
+                            // wipe to fresh-spawn population on Phase 16 upgrade.
         s.version === 10 ||
         s.version === 9 ||
         s.version === 8 ||
@@ -319,6 +365,10 @@ export function loadState(): GameState | null {
       currentWeather: s.currentWeather ?? "CLEAR",
       lastWeatherRollMonth:
         s.lastWeatherRollMonth ?? s.time.gameYear * 12 + s.time.gameMonth,
+      // Phase 16: seed sheep when missing (any save older than v12). Saves
+      // already at v12+ keep their persisted herd so individual sheep
+      // identity is preserved across reload.
+      animals: Array.isArray(s.animals) ? s.animals : spawnInitialAnimals(grid, 10),
     };
 
     // v3 → v4: no monarch existed. Anoint the existing population.
