@@ -1,0 +1,37 @@
+Phase 11: The Grand Audit & Global Wiring Check
+Acknowledge this prompt. We are not adding new gameplay features in this step. Your objective is a comprehensive codebase audit to ensure total systemic integrity, eliminate dead code, and wire any disconnected UI or logic. Review the entire codebase and implement the following hardening measures:
+
+1. UI & State Machine Verification:
+
+Audit every button in the DOM (God Powers, Time Controls). Ensure every click/touch listener is explicitly wired to update the global state variables.
+
+Verify the FPS Counter is actively calculating and rendering delta time, not just displaying a static string.
+
+Audit the NPC State Machine (IDLE, MOVING, COMBAT, SLEEPING, DEAD, FLEEING). Ensure there are no "dead ends" where an NPC enters a state but lacks the logic to exit it (e.g., stuck sleeping forever, or fleeing infinitely into the map border).
+
+2. Memory Leak Prevention & Garbage Collection:
+
+Audit the citizens master array. When an NPC enters the DEAD state, ensure their sprite remains for a brief period, but their object is eventually spliced/removed from the active update loop to prevent array bloating and frame-rate drops.
+
+Audit all Particle Effects (Smite lightning, Meteor fire). Ensure particle objects are definitively deleted from memory once their opacity or lifespan reaches 0.
+
+3. The Asset Map Integrity Check:
+
+Review the AssetsMap dictionary against the compositeNPCSprite function. Add fallback logic: if a specific visual asset string returns undefined, it must gracefully render a generic placeholder or skip that layer rather than throwing a fatal console error that breaks the render loop.
+
+4. Edge Case Hardening (Succession & Economy):
+
+Ensure the Succession Failsafe logic is ironclad: If a monarch dies and no heirs exist, the system must immediately scan the surviving population, find the citizen with the highest Vanity or Gold, and elevate them to the throne in the same tick.
+
+Ensure the Treasury cannot go into negative integer values.
+
+Instruction: Confirm understanding. Provide the refactored and hardened code. Do not change the core game design, only fortify the existing logic.
+
+What to expect after this runs:
+You likely won't see massive visual changes on the canvas, and that is exactly the point. What you will notice is stability.
+
+Check the console: If you know how to open the developer console in your browser/Replit, check it after the agent finishes. It should be completely free of red error text.
+
+Test the edge cases: Try to break the game. Spam the "Smite" button 50 times in a row. If the game doesn't crash or slow down, the memory leak prevention worked.
+
+Let me know when the agent finishes the audit. Once the foundation is unbreakable, the realm is officially yours to rule!

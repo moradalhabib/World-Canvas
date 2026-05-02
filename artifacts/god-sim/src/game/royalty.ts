@@ -369,13 +369,76 @@ export function succession(state: GameState, deadKing: Citizen): void {
       state,
       `King ${deadKing.name} has died with no heir. ${capRoyal(noble)} ${noble.name} is acclaimed amid bitter dispute.`
     );
-  } else {
-    state.nobleDissent = "HIGH";
-    addChronicle(
-      state,
-      `King ${deadKing.name} has died. No heir survives. The throne stands empty.`
-    );
+    return;
   }
+
+  // Phase 11 succession failsafe — rather than letting the throne sit empty
+  // (which soft-locks the realm), elevate the surviving adult citizen with
+  // the highest Vanity to King so the dynasty can endure.
+  if (elevateHighestVanityToKing(state, deadKing.name)) return;
+
+  // Absolute last resort: zero adults survive.
+  state.nobleDissent = "HIGH";
+  addChronicle(
+    state,
+    `King ${deadKing.name} has died. No heir survives. The throne stands empty.`
+  );
+}
+
+/**
+ * Phase 11: Pick the surviving adult citizen with the highest Vanity and
+ * crown them. Used both as a succession last-resort and as a periodic
+ * "soft-lock recovery" check (see `ensureMonarch`).
+ *
+ * Returns true if a citizen was elevated.
+ */
+function elevateHighestVanityToKing(state: GameState, deadKingName?: string): boolean {
+  const currentYear = state.time.gameYear;
+  const candidate = state.citizens
+    .filter(
+      (c) =>
+        c.state !== "DEAD" &&
+        !c.isKing &&
+        ageOf(c, currentYear) >= ADULT_AGE
+    )
+    .sort((a, b) => (b.vanity ?? 0) - (a.vanity ?? 0))[0];
+  if (!candidate) return false;
+
+  // Strip any conflicting royal/rebel flags before crowning.
+  candidate.isQueen = false;
+  candidate.isDowagerQueen = false;
+  candidate.isRebel = false;
+  candidate.isKing = true;
+  candidate.socialTier = "king";
+  candidate.state = "IDLE";
+  candidate.path = [];
+  candidate.pathIndex = 0;
+  candidate.progress = 0;
+  candidate.targetTile = undefined;
+  candidate.targetBuildingId = undefined;
+  state.nobleDissent = "HIGH";
+  addChronicle(
+    state,
+    deadKingName
+      ? `King ${deadKingName} has died with no heir. ${candidate.name}, the most prominent commoner (Vanity ${Math.round(candidate.vanity ?? 0)}), is hastily elevated to the throne.`
+      : `The throne stood empty. ${candidate.name}, the most prominent commoner (Vanity ${Math.round(candidate.vanity ?? 0)}), is acclaimed monarch by popular demand.`
+  );
+  return true;
+}
+
+/**
+ * Phase 11: Defensive check called from the engine each year. If the throne
+ * is currently empty (no living King), runs the highest-Vanity failsafe so
+ * the realm can never permanently soft-lock on a no-heir extinction event.
+ *
+ * Safe to call every tick — it returns immediately if a King is alive.
+ */
+export function ensureMonarch(state: GameState): void {
+  const livingKing = state.citizens.find(
+    (c) => c.isKing && c.state !== "DEAD"
+  );
+  if (livingKing) return;
+  elevateHighestVanityToKing(state);
 }
 
 /* -------------------------------------------------------------------------- */

@@ -25,7 +25,7 @@ import {
   recordCombatWitnesses,
 } from "./npc";
 import { findPath } from "./pathfinding";
-import { tickYear as tickRoyalYear, getLifeStage, notifyDeath, addChronicle } from "./royalty";
+import { tickYear as tickRoyalYear, getLifeStage, notifyDeath, addChronicle, ensureMonarch } from "./royalty";
 import type { Citizen } from "./types";
 
 /* Phase 4: Combat tunables */
@@ -328,6 +328,11 @@ export class GameEngine {
           this.state.buildings,
           this.state.civilization
         );
+        // Phase 11: After every yearly royalty tick, guarantee a living
+        // monarch — if succession somehow leaves the throne empty, the
+        // highest-Vanity surviving adult is acclaimed so the game can
+        // never permanently soft-lock on a no-heir extinction event.
+        ensureMonarch(this.state);
         this.state.time.gameYear = realYear;
         safety++;
       }

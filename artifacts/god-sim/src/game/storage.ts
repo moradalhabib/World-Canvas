@@ -9,14 +9,16 @@ import type {
 } from "./types";
 import { createDefaultCivilization } from "./civilization";
 import { normalizeCitizens, spawnInitialCitizens } from "./npc";
-import { anointInitialKing, loadChronicle } from "./royalty";
+import { anointInitialKing, ensureMonarch, loadChronicle } from "./royalty";
 
 const SAVE_KEY = "god_sim_state";
 /** v1: terrain only. v2: + buildings + civilization. v3: + citizens.
  *  v4: + royal succession (nobleDissent, chronicle, lineage fields).
  *  v5: + Phase 6 lifecycle (safety, vanity, day/night, REBEL/SLEEPING).
- *  v6: + Phase 5 Divine Powers (crater tile, building.status, winterActive). */
-const CURRENT_VERSION = 6;
+ *  v6: + Phase 5 Divine Powers (crater tile, building.status, winterActive).
+ *  v7: + Phase 11 balance pass — one-shot hunger reset on load + empty-throne
+ *       failsafe applied via ensureMonarch(). */
+const CURRENT_VERSION = 7;
 const INITIAL_CITIZEN_COUNT = 6;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;
@@ -194,15 +196,17 @@ export function loadState(): GameState | null {
     if (!raw) return null;
     const s: SerializedState = JSON.parse(raw);
 
-    // v6 is current. We migrate from v2 (no citizens), v3 (no royalty),
-    // v4 (no Phase-6 lifecycle/day-night), and v5 (no Phase-5 winter/rubble/crater).
+    // v7 is current. We migrate from v2 (no citizens), v3 (no royalty),
+    // v4 (no Phase-6 lifecycle/day-night), v5 (no Phase-5 winter/rubble/crater),
+    // and v6 (Phase 11 balance pass: zero hunger + empty-throne failsafe).
     // Older versions are discarded.
     if (
       s.version !== CURRENT_VERSION &&
       s.version !== 2 &&
       s.version !== 3 &&
       s.version !== 4 &&
-      s.version !== 5
+      s.version !== 5 &&
+      s.version !== 6
     ) {
       return null;
     }
@@ -213,7 +217,11 @@ export function loadState(): GameState | null {
 
     let citizens: Citizen[];
     if (
-      (s.version === CURRENT_VERSION || s.version === 5 || s.version === 4 || s.version === 3) &&
+      (s.version === CURRENT_VERSION ||
+        s.version === 6 ||
+        s.version === 5 ||
+        s.version === 4 ||
+        s.version === 3) &&
       Array.isArray(s.citizens)
     ) {
       // Backfill any fields added in mid-version code changes (e.g. faith,
@@ -250,6 +258,18 @@ export function loadState(): GameState | null {
     // v3 → v4: no monarch existed. Anoint the existing population.
     if (s.version === 3 || s.version === 2) {
       anointInitialKing(state);
+    }
+
+    // v6 → v7: Phase 11 one-shot save fix.
+    //   1) Zero everyone's hunger so the user isn't punished by the old
+    //      pre-balance-pass drain rates while they test the new tunings.
+    //   2) If the throne is empty (e.g. Queen-died-without-heir soft-lock),
+    //      elevate the highest-Vanity surviving citizen to King.
+    if (s.version === 6) {
+      for (const c of state.citizens) {
+        if (c.state !== "DEAD") c.hunger = 0;
+      }
+      ensureMonarch(state);
     }
 
     return state;
