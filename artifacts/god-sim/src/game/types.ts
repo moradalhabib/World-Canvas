@@ -233,7 +233,14 @@ export type CitizenState =
   | "WORKING"
   | "MINISTERING"
   | "SLEEPING"
-  | "REBEL";
+  | "REBEL"
+  | "COMBAT";
+
+/** Phase 4: Profession assigned to every adult NPC. */
+export type Profession = "Farmer" | "Miner" | "Guard" | "None";
+
+/** Phase 4: Faction during a Civil War (HIGH dissent). */
+export type Faction = "royalist" | "rebel" | "neutral";
 
 export type LifeStage = "child" | "adult" | "elder";
 
@@ -301,6 +308,18 @@ export interface Citizen {
   isRebel?: boolean;
   /** Building id of the home this NPC last slept in (sticky). */
   homeBuildingId?: string;
+
+  /* -- Phase 4: Professions, Economy & Factions -- */
+  /** Adult profession — drives the per-month economy tick. */
+  profession?: Profession;
+  /** Personal goods stockpile (raw output before being banked into vanity/gold). */
+  goods?: number;
+  /** Faction allegiance during a Civil War (set when nobleDissent = HIGH). */
+  faction?: Faction;
+  /** Frames remaining in the current COMBAT lockup before resolution. */
+  combatTimer?: number;
+  /** id of the opposing combatant currently locked with this NPC. */
+  combatOpponentId?: string;
 }
 
 /* ── Phase 3B: Chronicle entries ── */

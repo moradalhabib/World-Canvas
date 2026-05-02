@@ -243,8 +243,36 @@ export function tickCitizenMonth(
   // --- 1. DEAD: completely inert -------------------------------------------
   if (citizen.state === "DEAD") return;
 
+  // Phase 6: Sleeping NPCs are inert until woken at dawn.
+  if (citizen.state === "SLEEPING") return;
+
+  // Phase 6: Children skip the work/crisis brain — they wander/idle. They
+  // still age (birthYear) and can starve via civ-level food shortages.
+  const year = state?.time.gameYear ?? 1;
+  const stage = getLifeStage(citizen, year);
+  if (stage === "child") {
+    citizen.state = "IDLE";
+    return;
+  }
+
+  // Phase 6: Promote ROGUE to REBEL when civil war is underway and the NPC
+  // feels unsafe. REBELs behave like ROGUEs but are eligible to seize the
+  // crown if they (or a comrade) topple the King.
+  if (
+    citizen.state === "ROGUE" &&
+    state?.nobleDissent === "HIGH" &&
+    citizen.safety <= LOW_SAFETY_REBEL_THRESHOLD &&
+    !citizen.isKing
+  ) {
+    if (!citizen.isRebel) {
+      citizen.isRebel = true;
+      addChronicle(state, `${citizen.name} raises the banner of rebellion.`);
+    }
+    citizen.state = "REBEL";
+  }
+
   // --- 2. Already in a crisis state: tick the death timer ------------------
-  if (citizen.state === "PRAYING" || citizen.state === "ROGUE") {
+  if (citizen.state === "PRAYING" || citizen.state === "ROGUE" || citizen.state === "REBEL") {
     citizen.crisisTimer += 1;
     if (citizen.crisisTimer > CRISIS_DEATH_TIMER) {
       // Starvation / consequence kicks in — they fall where they stand.
@@ -258,8 +286,8 @@ export function tickCitizenMonth(
       if (state) notifyDeath(state, citizen);
       return;
     }
-    // ROGUE: if they have no active path (target gone, etc.), try to repath.
-    if (citizen.state === "ROGUE" && citizen.path.length === 0) {
+    // ROGUE/REBEL: if they have no active path (target gone, etc.), try to repath.
+    if ((citizen.state === "ROGUE" || citizen.state === "REBEL") && citizen.path.length === 0) {
       const target = findNearestStealTarget(
         citizen.row,
         citizen.col,
@@ -397,18 +425,27 @@ export function updateCitizenMovement(
   timeScale: number,
   buildings: Building[],
   allCitizens: Citizen[],
-  civ: CivilizationState
+  civ: CivilizationState,
+  state?: GameState
 ): void {
   if (timeScale === 0) return;
-  if (citizen.state === "DEAD" || citizen.state === "PRAYING") return;
+  if (citizen.state === "DEAD" || citizen.state === "PRAYING" || citizen.state === "SLEEPING") return;
   if (citizen.path.length === 0 || citizen.pathIndex >= citizen.path.length) return;
 
-  // SEEK_FOOD/ROGUE keep their named state; otherwise mark MOVING for HUD
-  if (citizen.state !== "SEEK_FOOD" && citizen.state !== "ROGUE") {
+  // SEEK_FOOD/ROGUE/REBEL keep their named state; otherwise mark MOVING for HUD
+  if (
+    citizen.state !== "SEEK_FOOD" &&
+    citizen.state !== "ROGUE" &&
+    citizen.state !== "REBEL"
+  ) {
     citizen.state = "MOVING";
   }
 
-  const tilesPerMs = (TILES_PER_SECOND_AT_1X / 1000) * timeScale;
+  // Phase 6: Elders shuffle along at 70% speed.
+  const year = state?.time.gameYear ?? 1;
+  const speedMul =
+    getLifeStage(citizen, year) === "elder" ? ELDER_SPEED_MULTIPLIER : 1;
+  const tilesPerMs = (TILES_PER_SECOND_AT_1X / 1000) * timeScale * speedMul;
   citizen.progress += dtMs * tilesPerMs;
 
   while (citizen.progress >= 1 && citizen.pathIndex < citizen.path.length) {
@@ -432,18 +469,125 @@ export function updateCitizenMovement(
       if (target && (target.typeId === "bakery" || target.typeId === "farm")) {
         citizen.hunger = 0;
       }
-    } else if (citizen.state === "ROGUE") {
+    } else if (citizen.state === "ROGUE" || citizen.state === "REBEL") {
       // Steal! Drains the treasury and cures the crisis.
       const stolen = Math.min(ROGUE_STEAL_AMOUNT, civ.treasury);
       civ.treasury -= stolen;
       civ.resources.gold = civ.treasury; // keep the dual-tracked field in sync
+      citizen.vanity += stolen; // Phase 6: hoarded loot makes them a coronation candidate
       citizen.hunger = 0;
       citizen.crisisTimer = 0;
+
+      // Phase 6: Assassination — a REBEL who reaches a tile within range of
+      // the King (or Dowager Queen regent) topples them. Triggers rebellion
+      // succession via succession() inside notifyDeath().
+      if (citizen.state === "REBEL" && state) {
+        for (const other of allCitizens) {
+          if (other.state === "DEAD") continue;
+          if (!other.isKing && !other.isDowagerQueen) continue;
+          const dr = Math.abs(other.row - citizen.row);
+          const dc = Math.abs(other.col - citizen.col);
+          if (dr + dc <= ASSASSINATION_RADIUS) {
+            const wasKing = !!other.isKing;
+            other.state = "DEAD";
+            other.path = [];
+            other.pathIndex = 0;
+            other.progress = 0;
+            other.targetTile = undefined;
+            other.targetBuildingId = undefined;
+            addChronicle(
+              state,
+              `${citizen.name} cuts down ${wasKing ? "King" : "Dowager Queen"} ${other.name} in cold rebellion.`
+            );
+            notifyDeath(state, other);
+            break;
+          }
+        }
+      }
     }
 
     citizen.state = "IDLE";
     citizen.targetTile = undefined;
     citizen.targetBuildingId = undefined;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Phase 6: Sleep Protocol & Day/Night transitions                           */
+/* -------------------------------------------------------------------------- */
+
+/** Find nearest residential building. Returns null if none exist. */
+function findNearestHome(
+  row: number,
+  col: number,
+  buildings: Building[]
+): Building | null {
+  let best: Building | null = null;
+  let bestDist = Infinity;
+  for (const b of buildings) {
+    if (b.typeId !== "house_free" && b.typeId !== "house_middle" && b.typeId !== "house_high") {
+      continue;
+    }
+    const d = Math.abs(b.row - row) + Math.abs(b.col - col);
+    if (d < bestDist) {
+      bestDist = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
+/**
+ * Called at the start of a Night month. All non-DEAD, non-King NPCs path to
+ * the nearest residential building. Those who can't reach one sleep outside
+ * and lose Safety, raising their odds of turning ROGUE/REBEL.
+ *
+ * Spec: "all non-guard NPCs enter a SLEEPING state". We treat the King and
+ * Dowager Queen as the de-facto guards/defenders that don't sleep.
+ */
+export function processNightSleep(state: GameState, grid: Grid, buildings: Building[]): void {
+  for (const c of state.citizens) {
+    if (c.state === "DEAD") continue;
+    if (c.isKing || c.isDowagerQueen) continue;
+    if (c.state === "PRAYING") continue; // pious citizens kneel through the night
+
+    const home = findNearestHome(c.row, c.col, buildings);
+    if (!home) {
+      // No residential building exists — entire town sleeps outside.
+      c.safety = Math.max(0, c.safety - HOMELESS_SAFETY_PENALTY);
+      c.state = "SLEEPING";
+      c.path = [];
+      c.pathIndex = 0;
+      c.progress = 0;
+      continue;
+    }
+
+    const path = findPath(grid, c.row, c.col, home.row, home.col);
+    if (path && path.length > 0) {
+      // Snap straight to home — sleep happens "by midnight".
+      c.row = home.row;
+      c.col = home.col;
+      c.path = [];
+      c.pathIndex = 0;
+      c.progress = 0;
+      c.state = "SLEEPING";
+      c.homeBuildingId = home.id;
+      c.safety = Math.min(100, c.safety + SAFETY_RECOVERY_PER_NIGHT);
+    } else {
+      // Unreachable home — slept in the gutter.
+      c.safety = Math.max(0, c.safety - HOMELESS_SAFETY_PENALTY);
+      c.state = "SLEEPING";
+      c.path = [];
+      c.pathIndex = 0;
+      c.progress = 0;
+    }
+  }
+}
+
+/** Called at the start of a Day month. Wake everyone who was sleeping. */
+export function processDayWake(state: GameState): void {
+  for (const c of state.citizens) {
+    if (c.state === "SLEEPING") c.state = "IDLE";
   }
 }
 
