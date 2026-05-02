@@ -2636,18 +2636,31 @@ export class GameEngine {
         }
       }
 
-      // Leg color matches body for cohesion
+      // Phase 20.5 — Limb pass. Beefier, higher-contrast limbs so the
+      // gait is unmistakable. Leg color is a darker boot/trouser tone;
+      // we now also paint a small foot rect at the bottom so the leg
+      // doesn't end in a thin stick. King keeps deep crimson; nobles a
+      // plum; commoners a saturated walnut (was muddy #3f3424 — that
+      // blended into the body and made NPCs look limbless).
       const legColor =
         c.socialTier === "king"   ? "#3d0508" :
         c.socialTier === "noble"  ? "#3a1f5e" :
-                                    "#3f3424";
-      const legW = ts * 0.10;
-      const legH = ts * 0.14;
-      const legY = cy + ts * 0.18;
-      // Alternating gait: phase shifts by NPC id-hash so they don't march in lockstep
+                                    "#3a2a18";
+      const footColor =
+        c.socialTier === "king"   ? "#1a0205" :
+        c.socialTier === "noble"  ? "#1a0e30" :
+                                    "#1d1408";
+      const legW = ts * 0.12;       // was 0.10 — +20% width
+      const legH = ts * 0.18;       // was 0.14 — longer legs read better
+      const footW = ts * 0.14;
+      const footH = ts * 0.04;
+      const legY = cy + ts * 0.16;
+      // Alternating gait: phase shifts by NPC id-hash so they don't march
+      // in lockstep. Swing amplitude bumped from ts*0.06 → ts*0.10 so the
+      // 2-frame "left forward / right forward" pattern is obvious at zoom.
       const gaitPhase = c.hue * 0.05;
       const swing = isMoving ? Math.sin(t * 8 + gaitPhase) : 0;
-      const offsetA = swing * ts * 0.06;
+      const offsetA = swing * ts * 0.10;
       const offsetB = -offsetA;
 
       /* ---------- DEAD: rotated 90° + 0.4 alpha for the WHOLE figure ---------- */
@@ -2658,10 +2671,13 @@ export class GameEngine {
         ctx.rotate(Math.PI / 2);
         ctx.translate(-cx, -cy);
         ctx.drawImage(sprite, dx, dy);
-        // Static (non-swinging) legs while dead
+        // Static (non-swinging) legs + feet while dead
         ctx.fillStyle = legColor;
         ctx.fillRect(cx - legW - ts * 0.01, legY, legW, legH);
         ctx.fillRect(cx + ts * 0.01, legY, legW, legH);
+        ctx.fillStyle = footColor;
+        ctx.fillRect(cx - legW - ts * 0.01 - (footW - legW) / 2, legY + legH - footH, footW, footH);
+        ctx.fillRect(cx + ts * 0.01 - (footW - legW) / 2,        legY + legH - footH, footW, footH);
         ctx.restore();
         if (lifeScale !== 1) ctx.restore();
         return; // Phase 13: per-citizen call — early-exit instead of `continue`.
@@ -2708,17 +2724,44 @@ export class GameEngine {
       // gait cycle, like a real walk. Negative = upward in screen-space.
       const bobY = isMoving ? -Math.abs(Math.sin(t * 8 + gaitPhase)) * ts * 0.03 : 0;
 
-      // Arm geometry: drawn live (not in cached sprite) so they swing.
-      // Arms swing OPPOSITE to legs for a believable cross-gait.
-      const armSwing = isMoving ? -swing * ts * 0.08 : 0;
+      // Phase 20.5 — Arm geometry. Drawn live (not in cached sprite) so
+      // they swing. Arms swing OPPOSITE to legs while WALKING for a
+      // believable cross-gait. While CHATTING the arms move TOGETHER
+      // up/down ~10px to read as a "talking" gesture (not a walk).
+      // armW bumped 0.07 → 0.10 so they're visible past the body silhouette.
+      const isChatting = c.state === "CHATTING";
+      const isFocusing = c.state === "WORKING" && (c.socialTier !== "peasant" || (c.skills?.level ?? 1) >= 3);
+      // Talk gesture: both arms shift down ~ts*0.06 (≈10px at default zoom)
+      // on a slow 3 Hz sine — feels like emphatic gesturing.
+      const talkBob = isChatting ? (Math.sin(t * 3 + gaitPhase) * 0.5 + 0.5) * ts * 0.06 : 0;
+      // Focus pulse: Specialist+ "leaning in" while working — small forward
+      // arm dip on a 4 Hz sine.
+      const focusBob = isFocusing ? Math.abs(Math.sin(t * 4 + gaitPhase)) * ts * 0.04 : 0;
+      const armSwing = isMoving && !isChatting ? -swing * ts * 0.10 : 0;
       const armColor =
-        c.socialTier === "king"   ? "#5e0b10" :
-        c.socialTier === "noble"  ? "#502c7a" :
-                                    "#5a4a32";
-      const armW = ts * 0.07;
-      const armH = ts * 0.20;
+        c.socialTier === "king"   ? "#7a1419" :       // Crimson sleeve
+        c.socialTier === "noble"  ? "#6a3a9a" :       // Bright royal sleeve
+        c.profession === "Guard"  ? "#4a5a7a" :       // Steel-grey for guards (Specialist)
+        c.profession === "Doctor" ? "#d4a85a" :       // Gold-trim for doctors (Specialist)
+        c.profession === "Farmer" ? "#7a6a3a" :       // Wheat-tone for farmers (Specialist)
+        c.profession === "Miner"  ? "#5a4a3a" :       // Coal-grey for miners (Specialist)
+        (c.skills?.level ?? 1) >= 3 ? "#6a4a2a" :     // Specialist commoner — saturated wood
+                                    "#5a4530";        // Plain commoner — earth tone
+      const armW = ts * 0.10;       // was 0.07 — +43% visible mass
+      const armH = ts * 0.22;       // was 0.20 — slightly longer
       const shoulderY = cy - ts * 0.05;
-      const armOuterX = ts * 0.20; // distance from cx to arm center
+      const armOuterX = ts * 0.22;  // was 0.20 — arms peek beyond body silhouette
+
+      // Phase 20.5 — Royal gold drop-shadow. Canvas `filter:` is
+      // unreliable across browsers, so we use the native shadow API
+      // instead, which is what the user is asking for visually. Only
+      // applied to the actual reigning King (not retired/queens) so the
+      // glow uniquely identifies him.
+      if (c.isKing) {
+        ctx.save();
+        ctx.shadowColor = "#ffd700";
+        ctx.shadowBlur = Math.max(3, ts * 0.06);
+      }
 
       // Apply facing transform around the feet anchor so rotation pivots
       // at the ground (figure leans, doesn't slide off the tile).
@@ -2729,21 +2772,50 @@ export class GameEngine {
       ctx.rotate(tiltRad);
       ctx.translate(-cx, -feetY + bobY);
 
-      // Legs (drawn first so body overlaps the tops cleanly)
+      // Legs (drawn first so body overlaps the tops cleanly).
+      // Phase 20.5 — batched: set fillStyle once for both legs + feet of
+      // a tier, since we're already iterating one citizen at a time the
+      // GPU paint cost is dominated by the rectangle count, not state
+      // changes. Two leg rects + two foot rects per NPC.
       ctx.fillStyle = legColor;
       ctx.fillRect(cx - legW - ts * 0.01, legY + offsetA, legW, legH);
       ctx.fillRect(cx + ts * 0.01,        legY + offsetB, legW, legH);
+      ctx.fillStyle = footColor;
+      ctx.fillRect(cx - legW - ts * 0.01 - (footW - legW) / 2, legY + offsetA + legH - footH, footW, footH);
+      ctx.fillRect(cx + ts * 0.01 - (footW - legW) / 2,        legY + offsetB + legH - footH, footW, footH);
 
       // Arms — front pair (drawn behind body so the body sprite covers
-      // the shoulder root), each swinging opposite to its same-side leg.
+      // the shoulder root). Walking → opposite swing. Chatting →
+      // synchronized talkBob. Working (Specialist+) → focus dip.
       ctx.fillStyle = armColor;
-      ctx.fillRect(cx - armOuterX - armW * 0.5, shoulderY + armSwing, armW, armH);
-      ctx.fillRect(cx + armOuterX - armW * 0.5, shoulderY - armSwing, armW, armH);
+      const leftArmY  = shoulderY + armSwing + talkBob + focusBob;
+      const rightArmY = shoulderY - armSwing + talkBob + focusBob;
+      ctx.fillRect(cx - armOuterX - armW * 0.5, leftArmY,  armW, armH);
+      ctx.fillRect(cx + armOuterX - armW * 0.5, rightArmY, armW, armH);
 
       // Body + head sprite
       ctx.drawImage(sprite, dx, dy);
 
+      // Phase 20.5 — Specialist tool accessory: builder's hammer for the
+      // commoner-class Specialist (skill ≥ 3, no profession-specific tool
+      // already drawn by drawAccessory). Tiny grey rectangle + brown
+      // handle in the right hand. Skipped for Farmer/Miner/Guard — they
+      // already get drawAccessory tools elsewhere.
+      const showBuilderHammer = (c.skills?.level ?? 1) >= 3
+        && (c.profession === undefined || c.profession === "None");
+      if (showBuilderHammer) {
+        const handX = cx + armOuterX;
+        const handY = rightArmY + armH * 0.85;
+        // Handle (brown)
+        ctx.fillStyle = "#6a3a18";
+        ctx.fillRect(handX - ts * 0.015, handY, ts * 0.03, ts * 0.12);
+        // Head (grey rect)
+        ctx.fillStyle = "#7a7a82";
+        ctx.fillRect(handX - ts * 0.05, handY + ts * 0.10, ts * 0.10, ts * 0.05);
+      }
+
       ctx.restore();
+      if (c.isKing) ctx.restore();
 
       /* ---------- ROGUE: pulsing red overhead circle ---------- */
       if (c.state === "ROGUE") {
@@ -2825,20 +2897,24 @@ export class GameEngine {
           c.state === "HEALING" ||
           c.state === "DRINKING"
         ) {
-          let glyph = "?";
+          // Phase 20.5 — "no letter placeholders." Previously rendered
+          // text glyphs (?, !, $, +, ‖, 🍺) above the head; now drawn as
+          // pure shape badges so the silhouette tells the story without
+          // any typography. The halo color still encodes the state.
+          type Shape = "alert" | "circle" | "diamond" | "bars" | "cross" | "mug";
+          let shape: Shape = "circle";
           let color = "#ffd64a";
           if (c.state === "MENTAL_BREAK") {
-            if (c.breakKind === "DOOMSAYER") { glyph = "!"; color = "#ff4848"; }
-            else if (c.breakKind === "RECLUSE") { glyph = "?"; color = "#9aa6c0"; }
-            else if (c.breakKind === "THIEF")   { glyph = "$"; color = "#ffd64a"; }
+            if (c.breakKind === "DOOMSAYER") { shape = "alert";  color = "#ff4848"; }
+            else if (c.breakKind === "RECLUSE") { shape = "circle"; color = "#9aa6c0"; }
+            else if (c.breakKind === "THIEF")   { shape = "diamond"; color = "#ffd64a"; }
           }
-          // Phase 14 — Living City Expansion overlays
-          else if (c.state === "STEALING")    { glyph = "$"; color = "#ff9933"; }
-          else if (c.state === "ARRESTING")   { glyph = "!"; color = "#3aa1ff"; }
-          else if (c.state === "IMPRISONED")  { glyph = "‖"; color = "#9aa3ad"; }
-          else if (c.state === "HEALING")     { glyph = "+"; color = "#5fd16f"; }
-          else if (c.state === "DRINKING")    { glyph = "🍺"; color = "#e8b85a"; }
-          // Soft halo behind the glyph for legibility on bright tiles.
+          else if (c.state === "STEALING")    { shape = "diamond"; color = "#ff9933"; }
+          else if (c.state === "ARRESTING")   { shape = "alert";   color = "#3aa1ff"; }
+          else if (c.state === "IMPRISONED")  { shape = "bars";    color = "#9aa3ad"; }
+          else if (c.state === "HEALING")     { shape = "cross";   color = "#5fd16f"; }
+          else if (c.state === "DRINKING")    { shape = "mug";     color = "#e8b85a"; }
+          // Soft halo behind the badge for legibility on bright tiles.
           const haloR = ts * 0.16;
           const grad = ctx.createRadialGradient(cx, bubbleCy, ts * 0.02, cx, bubbleCy, haloR);
           grad.addColorStop(0, color + "cc");
@@ -2847,15 +2923,69 @@ export class GameEngine {
           ctx.beginPath();
           ctx.arc(cx, bubbleCy, haloR, 0, Math.PI * 2);
           ctx.fill();
-          // Glyph itself.
-          ctx.fillStyle = "#0d1117";
-          ctx.strokeStyle = color;
+          // Shape badge — solid color body + dark outline for contrast.
+          // Phase 20.5 polish — wrap in save/restore so the mug's foam
+          // fillStyle swap (and any future shape state changes) can't
+          // leak into the next NPC's draw block. Architect-flagged.
+          ctx.save();
+          ctx.fillStyle = color;
+          ctx.strokeStyle = "rgba(13,17,23,0.95)";
           ctx.lineWidth = Math.max(1, ts * 0.018);
-          ctx.font = `bold ${Math.round(ts * 0.28)}px Georgia, serif`;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.strokeText(glyph, cx, bubbleCy);
-          ctx.fillText(glyph, cx, bubbleCy);
+          const r = ts * 0.10;
+          if (shape === "alert") {
+            // Warning triangle pointing up
+            ctx.beginPath();
+            ctx.moveTo(cx, bubbleCy - r);
+            ctx.lineTo(cx + r * 0.95, bubbleCy + r * 0.7);
+            ctx.lineTo(cx - r * 0.95, bubbleCy + r * 0.7);
+            ctx.closePath();
+            ctx.fill(); ctx.stroke();
+          } else if (shape === "circle") {
+            // Hollow circle (recluse) — stroke-only, no fill, so the
+            // halo gradient shows through the center. Architect-flagged
+            // that the previous version filled it solid.
+            ctx.beginPath();
+            ctx.arc(cx, bubbleCy, r * 0.75, 0, Math.PI * 2);
+            ctx.lineWidth = Math.max(1.5, ts * 0.025);
+            ctx.strokeStyle = color;
+            ctx.stroke();
+          } else if (shape === "diamond") {
+            // Diamond (thief / stealing — value/coin shape)
+            ctx.beginPath();
+            ctx.moveTo(cx, bubbleCy - r);
+            ctx.lineTo(cx + r * 0.8, bubbleCy);
+            ctx.lineTo(cx, bubbleCy + r);
+            ctx.lineTo(cx - r * 0.8, bubbleCy);
+            ctx.closePath();
+            ctx.fill(); ctx.stroke();
+          } else if (shape === "bars") {
+            // Two vertical bars (imprisoned)
+            const bw = r * 0.32, bh = r * 1.5;
+            ctx.fillRect(cx - r * 0.55, bubbleCy - bh / 2, bw, bh);
+            ctx.fillRect(cx + r * 0.23, bubbleCy - bh / 2, bw, bh);
+            ctx.strokeRect(cx - r * 0.55, bubbleCy - bh / 2, bw, bh);
+            ctx.strokeRect(cx + r * 0.23, bubbleCy - bh / 2, bw, bh);
+          } else if (shape === "cross") {
+            // Medical cross (healing)
+            const tw = r * 1.4, tt = r * 0.42;
+            ctx.fillRect(cx - tw / 2, bubbleCy - tt / 2, tw, tt);
+            ctx.fillRect(cx - tt / 2, bubbleCy - tw / 2, tt, tw);
+            ctx.strokeRect(cx - tw / 2, bubbleCy - tt / 2, tw, tt);
+            ctx.strokeRect(cx - tt / 2, bubbleCy - tw / 2, tt, tw);
+          } else if (shape === "mug") {
+            // Beer mug (drinking) — rectangle body + handle arc
+            const mw = r * 1.2, mh = r * 1.4;
+            ctx.fillRect(cx - mw / 2, bubbleCy - mh / 2, mw, mh);
+            ctx.strokeRect(cx - mw / 2, bubbleCy - mh / 2, mw, mh);
+            // Foam cap
+            ctx.fillStyle = "#fff8e0";
+            ctx.fillRect(cx - mw / 2, bubbleCy - mh / 2, mw, mh * 0.18);
+            // Handle
+            ctx.beginPath();
+            ctx.arc(cx + mw / 2, bubbleCy, mh * 0.32, -Math.PI / 2, Math.PI / 2);
+            ctx.stroke();
+          }
+          ctx.restore();
         }
       }
     }
