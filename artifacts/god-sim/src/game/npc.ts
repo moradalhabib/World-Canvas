@@ -29,8 +29,11 @@ import {
 
 // Phase 11 balance pass: base hunger drain reduced ~30% (8→6 base, 6→4 jitter)
 // so the town can survive the new Winter cycles without immediately starving.
-const HUNGER_RISE_PER_MONTH = 6;
-const HUNGER_RISE_JITTER = 4;
+// Phase 20.6 "God-Sim pacing" pass: cut another ~65% (6→2 base, 4→2 jitter)
+// so reproduction outpaces starvation and the population actually grows.
+// Net change vs the original Phase 1 baseline: 8→2 / 6→2  ≈ 73% reduction.
+const HUNGER_RISE_PER_MONTH = 2;
+const HUNGER_RISE_JITTER = 2;
 const HUNGER_SEEK_THRESHOLD = 70;
 const HUNGER_CRISIS_THRESHOLD = 100;
 const FAITH_PRAY_THRESHOLD = 50;
@@ -514,7 +517,8 @@ function tickEconomyAndFaction(
 ): void {
   const year = state.time.gameYear;
   const stage = getLifeStage(citizen, year);
-  if (stage === "child") return;
+  // Phase 20.6: infants and children both skip the economy/work loop.
+  if (stage === "child" || stage === "infant") return;
   if (citizen.isKing || citizen.isQueen || citizen.isDowagerQueen) return;
 
   // 1) Production
@@ -696,8 +700,18 @@ export function tickCitizenMonth(
 
   // Phase 6: Children skip the work/crisis brain — they wander/idle. They
   // still age (birthYear) and can starve via civ-level food shortages.
+  // Phase 20.6: infants are even more inert — they stay swaddled at home,
+  // skip the hunger tick entirely (the spec says they "drain parent energy"
+  // not their own), and just wait to mature. Both stages skip work.
   const year = state?.time.gameYear ?? 1;
   const stage = getLifeStage(citizen, year);
+  if (stage === "infant") {
+    citizen.state = "IDLE";
+    citizen.path = [];
+    citizen.pathIndex = 0;
+    citizen.progress = 0;
+    return; // infants are swaddled — no hunger drain, no pathing
+  }
   if (stage === "child") {
     citizen.state = "IDLE";
     return;

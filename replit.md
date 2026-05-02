@@ -43,8 +43,17 @@ The game simulates civic needs, hunger, and complex NPC state machines. Key logi
 Citizen rendering includes:
 - **Limb Animation**: Beefier, higher-contrast limbs with distinct foot rects and increased swing amplitude for walking.
 - **Gestures**: CHATTING NPCs perform a talking gesture (arm bob), and WORKING specialists exhibit a focus pulse (arm dip).
-- **Accessories**: The King has a unique gold drop-shadow. Builder-type specialists (without other professions) are shown with a hammer accessory.
+- **Accessories**: The King has a unique gold drop-shadow. Builder-type specialists (without other professions) are shown with a hammer accessory. Mastery skill ≥ 5 (but < 10) gets a subtle gold halo on the profession tool — telegraphing rising mastery before they reach the gold/diamond tool tier at L10.
 - **Badge System**: Replaced all text-based overhead indicators on NPCs with pure shape badges for states like alert, recluse, thief, imprisoned, healing, and drinking.
+
+## Phase 20.6 — Dynasty & Biology
+- **Infant LifeStage**: New "infant" tier (ages 0..2) added to `LifeStage` union. `getLifeStage` is now a 4-way classifier (infant / child / adult / elder). Constants live in `royalty.ts` (`INFANT_AGE = 2`, `ADULT_AGE = 18`, `ELDER_AGE = 60`).
+- **Infant Render**: Drawn as a swaddled bundle (cream ellipse + pink head, no limbs, no overlays). Bypasses the composite sprite + limb pipeline via an early-out branch in `drawSingleCitizen`. Wrapped in its own `ctx.save()/restore()` so the fillStyle/strokeStyle changes don't leak into the next NPC.
+- **Infant Behavior**: Skipped by `tickEconomyAndFaction` and `tickCitizenMonth`. Path/pathIndex/progress are zeroed on every brain tick so the baby stays at the spawn tile (their parent's location). Hunger never rises for infants — per spec they "drain parent energy" rather than eating their own ration.
+- **Reproduction Gating**: `tryCivilianReproduction` (in `royalty.ts`) now requires both parents to have mood ≥ 40 AND be within 3 tiles of a house (the relaxed "in-the-same-House-at-NIGHT" check). Breed chance bumped 0.4 → 0.85, per-year cap 2 → 3 so the population actually grows.
+- **Birth Chronicle**: Reworded to user spec — `A new soul, [Name] [LastName], has joined the realm of King [KingName].` Pulls the king name via `findKing()`.
+- **Hunger Pacing**: `HUNGER_RISE_PER_MONTH` 6 → 2, `HUNGER_RISE_JITTER` 4 → 2. Net reduction vs Phase 1 baseline ≈ 73%. Reproduction can outpace starvation under typical food + housing setups.
+- **Composite Sprite Cache**: `subtleGlowTier` (level 5..9 band) is now part of the cache signature at bit 13, so a 4→5 levelup correctly invalidates and rebuilds the cached sprite with the new gold halo. Prior versions only tracked the master tier (≥10) and would silently miss the L5 transition until an unrelated change forced eviction.
 
 ## Data Persistence
 Game state is stored and versioned, with backward compatibility migrations for older saves. New fields are backfilled during state loading. Reactive timers (`panicUntilMs`, `admireUntilMs`) are stored as wall-clock timestamps on the Citizen object, designed to be harmlessly false if stale from older saves, thus avoiding the need for version bumps for these specific features.

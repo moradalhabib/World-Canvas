@@ -2230,6 +2230,19 @@ export class GameEngine {
     const toolDx = rightHandX - toolW * 0.5;
     const toolDy = handY - bodyH * 0.75;
 
+    // Phase 20.6 — "Visual Mastery" subtle gold glow at skill ≥ 5. Master
+    // (≥ 10) NPCs already get a unique gold/diamond tool ASSET so we don't
+    // double-glow them; instead the L5..L9 band gets a soft golden halo
+    // baked onto whatever tool they have, telegraphing "rising mastery"
+    // before they reach the gold-tool tier.
+    const lvl = cit.skills?.level ?? 1;
+    const subtleGlow = lvl >= 5 && !master;
+    if (subtleGlow) {
+      c.save();
+      c.shadowColor = "#ffd24a";
+      c.shadowBlur = Math.max(2, ts * 0.05);
+    }
+
     if (prof === "Farmer") {
       const a = this.assets.get(master ? "FarmerHoeGold" : "FarmerHoe");
       if (a) c.drawImage(a, toolDx, toolDy, toolW, toolH);
@@ -2245,6 +2258,8 @@ export class GameEngine {
         c.drawImage(shieldA, cx - bodyW * 0.55 - sh * 0.5, handY - sh * 0.5, sh, sh);
       }
     }
+
+    if (subtleGlow) c.restore();
   }
 
   /**
@@ -2282,10 +2297,16 @@ export class GameEngine {
     // updated mastery curve. Level-10 NPCs receive a unique gold/diamond
     // profession-tool variant in the atlas (see drawAccessory).
     const master = (c.skills?.level ?? 1) >= 10;
+    // Phase 20.6 — track the L5..L9 "subtle glow" band as a separate cache
+    // tier. drawAccessory keys its golden tool halo off this band, so a
+    // citizen leveling 4→5 must invalidate the composite sprite cache or
+    // the glow won't appear until some unrelated signature change occurs
+    // (architect-flagged regression).
+    const subtleGlowTier = !master && (c.skills?.level ?? 1) >= 5;
     const tierN  = c.socialTier === "king" ? 3 : c.socialTier === "noble" ? 2 : 0;
     const profN  = c.profession === "Farmer" ? 1 : c.profession === "Miner" ? 2 : c.profession === "Guard" ? 3 : 0;
     const traitN = c.trait === "Zealot" ? 1 : c.trait === "Greedy" ? 2 : c.trait === "Coward" ? 3 : c.trait === "Diligent" ? 4 : 0;
-    const stageN = stage === "child" ? 1 : stage === "elder" ? 2 : 0;
+    const stageN = stage === "child" ? 1 : stage === "elder" ? 2 : stage === "infant" ? 3 : 0;
     const royalN = c.isKing ? 1 : c.isQueen ? 2 : c.isDowagerQueen ? 3 : 0;
     const sig =
       tierN |
@@ -2293,7 +2314,8 @@ export class GameEngine {
       (traitN << 5) |
       (stageN << 8) |
       ((master ? 1 : 0) << 10) |
-      (royalN << 11);
+      (royalN << 11) |
+      ((subtleGlowTier ? 1 : 0) << 13);
 
     const cached = this.compositeSprites.get(c.id);
     if (cached && cached.sig === sig) return cached.sprite;
@@ -2617,6 +2639,50 @@ export class GameEngine {
         ctx.translate(cx, anchorY);
         ctx.scale(lifeScale, lifeScale);
         ctx.translate(-cx, -anchorY);
+      }
+
+      // Phase 20.6 — Infant render. Swaddled bundle (no limbs, no full
+      // sprite, no overlays). Bypasses every system below so a 0-2 yr old
+      // reads as a "baby in a blanket near a house" instead of a tiny
+      // half-rendered adult silhouette. Stage is also part of the
+      // composite-sprite cache key, so this never collides with a child.
+      if (lifeStage === "infant") {
+        // Phase 20.6 polish — wrap the whole branch in save/restore so
+        // fillStyle/strokeStyle/lineWidth changes here can't bleed into
+        // the next NPC's draw block. Architect-flagged.
+        ctx.save();
+        const cradleW = ts * 0.20;
+        const cradleH = ts * 0.22;
+        const cradleCy = cy + ts * 0.32 - cradleH * 0.5;
+        // Swaddle cloth body — warm cream ellipse with a brown outline
+        // for contrast against grass/dirt/snow.
+        ctx.fillStyle = "#f5e9d6";
+        ctx.strokeStyle = "rgba(60, 40, 20, 0.55)";
+        ctx.lineWidth = Math.max(1, ts * 0.012);
+        ctx.beginPath();
+        ctx.ellipse(cx, cradleCy, cradleW * 0.5, cradleH * 0.55, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        // Tiny diagonal cloth fold across the bundle
+        ctx.strokeStyle = "rgba(60, 40, 20, 0.35)";
+        ctx.lineWidth = Math.max(1, ts * 0.01);
+        ctx.beginPath();
+        ctx.moveTo(cx - cradleW * 0.35, cradleCy + cradleH * 0.05);
+        ctx.lineTo(cx + cradleW * 0.35, cradleCy - cradleH * 0.05);
+        ctx.stroke();
+        // Pink head poking out the top
+        ctx.fillStyle = "#f4c4a8";
+        ctx.strokeStyle = "rgba(60, 30, 10, 0.65)";
+        ctx.lineWidth = Math.max(1, ts * 0.012);
+        const headR = cradleW * 0.30;
+        const headCy = cradleCy - cradleH * 0.45;
+        ctx.beginPath();
+        ctx.arc(cx, headCy, headR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+        if (lifeScale !== 1) ctx.restore();
+        return;
       }
 
       // Phase 10: smoky heresy aura for ROGUE / REBEL (dark, floating particles)

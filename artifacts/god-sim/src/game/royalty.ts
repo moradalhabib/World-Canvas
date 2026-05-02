@@ -40,10 +40,16 @@ const QUEEN_MAX_AGE = 40;
 const CHRONICLE_CAP = 200;
 const CHRONICLE_KEY = "god_sim_chronicle";
 
-/* ---- Phase 6: Civilian reproduction tunables ---- */
+/* ---- Phase 6 / 20.6: Civilian reproduction tunables ---- */
 const CIVILIAN_BREED_FOOD_PER_PERSON = 4;            // bread/person threshold
-const CIVILIAN_BREED_CHANCE = 0.4;                   // per qualifying year
-const CIVILIAN_BREED_MAX_PER_YEAR = 2;               // hard cap so it doesn't snowball
+// Phase 20.6: doubled the breed chance and bumped the per-year cap. The
+// God-Sim pacing target is "see babies in the houses" — at the previous
+// 0.4 chance / 2 cap most realms only produced a child every 4-5 years
+// once you accounted for adult-of-each-sex availability and food gating.
+const CIVILIAN_BREED_CHANCE = 0.85;                  // per qualifying year
+const CIVILIAN_BREED_MAX_PER_YEAR = 3;               // hard cap so it doesn't snowball
+const CIVILIAN_BREED_MIN_MOOD = 40;                  // both parents need ≥40 mood
+const CIVILIAN_BREED_HOUSE_RADIUS = 3;               // tiles — mother must be near a house
 
 /* -------------------------------------------------------------------------- */
 /*  Names                                                                     */
@@ -147,9 +153,16 @@ export function ageOf(c: Citizen, currentYear: number): number {
   return Math.max(0, currentYear - c.birthYear);
 }
 
-/** Phase 6: Map an NPC's age to a discrete life stage. */
-export function getLifeStage(c: Citizen, currentYear: number): "child" | "adult" | "elder" {
+/** Phase 20.6: Infant cutoff. 0..2 game-years swaddled, no limbs, no work. */
+export const INFANT_AGE = 2;
+
+/** Phase 6 / 20.6: Map an NPC's age to a discrete life stage. */
+export function getLifeStage(
+  c: Citizen,
+  currentYear: number
+): "infant" | "child" | "adult" | "elder" {
   const age = ageOf(c, currentYear);
+  if (age < INFANT_AGE) return "infant";
   if (age < ADULT_AGE) return "child";
   if (age >= ELDER_AGE) return "elder";
   return "adult";
@@ -588,19 +601,44 @@ export function tryCivilianReproduction(state: GameState, buildings: Building[])
 
   // Housing check: total housing > living population.
   let totalHousing = 0;
+  const houses: Building[] = [];
   for (const b of buildings) {
-    if (b.typeId === "house_free") totalHousing += 4;
-    else if (b.typeId === "house_middle") totalHousing += 6;
-    else if (b.typeId === "house_high") totalHousing += 8;
+    if (b.typeId === "house_free") { totalHousing += 4; houses.push(b); }
+    else if (b.typeId === "house_middle") { totalHousing += 6; houses.push(b); }
+    else if (b.typeId === "house_high") { totalHousing += 8; houses.push(b); }
   }
   const living = state.citizens.filter((c) => c.state !== "DEAD").length;
   if (totalHousing <= living) return;
+  if (houses.length === 0) return; // no homes → no mating
+
+  // Phase 20.6: only adults that are (a) reasonably content (mood ≥ 40) and
+  // (b) currently within HOUSE_RADIUS of at least one house qualify as
+  // breeding candidates. This is the "in the same House at NIGHT" check from
+  // the Dynasty spec, relaxed to "near a house with high enough mood" so it
+  // works whether the year-tick happens to coincide with the night phase.
+  const isNearHouse = (c: Citizen): boolean => {
+    for (const h of houses) {
+      if (Math.abs(h.row - c.row) + Math.abs(h.col - c.col) <= CIVILIAN_BREED_HOUSE_RADIUS) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const eligible = adults.filter(
+    (c) => (c.mood ?? 0) >= CIVILIAN_BREED_MIN_MOOD && isNearHouse(c)
+  );
+  if (eligible.length < 2) return;
+
+  // Phase 20.6: birth chronicle uses the reigning King's name to honor the
+  // user's exact spec wording ("A new soul, [Name], has joined the realm of
+  // King [X]."). Falls back gracefully if the throne happens to be empty.
+  const kingName = findKing(state.citizens)?.name ?? "the unknown";
 
   for (let i = 0; i < CIVILIAN_BREED_MAX_PER_YEAR; i++) {
     if (Math.random() > CIVILIAN_BREED_CHANCE) continue;
-    // Pick two random adults of opposite sex (best effort).
-    const males = adults.filter((c) => c.sex === "male");
-    const females = adults.filter((c) => c.sex === "female");
+    // Pick two random eligible adults of opposite sex (best effort).
+    const males = eligible.filter((c) => c.sex === "male");
+    const females = eligible.filter((c) => c.sex === "female");
     if (males.length === 0 || females.length === 0) return;
     const father = males[Math.floor(Math.random() * males.length)];
     const mother = females[Math.floor(Math.random() * females.length)];
@@ -623,7 +661,7 @@ export function tryCivilianReproduction(state: GameState, buildings: Building[])
     state.citizens.push(baby);
     addChronicle(
       state,
-      `A child, ${baby.name} ${baby.lastName}, is born to ${father.name} ${father.lastName ?? ""} and ${mother.name} ${mother.lastName ?? ""}.`.replace(/\s+/g, " ")
+      `A new soul, ${baby.name} ${baby.lastName}, has joined the realm of King ${kingName}.`.replace(/\s+/g, " ")
     );
   }
 }

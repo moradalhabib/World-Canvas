@@ -427,7 +427,7 @@ export type Profession = "Farmer" | "Miner" | "Guard" | "Doctor" | "None";
 /** Phase 4: Faction during a Civil War (HIGH dissent). */
 export type Faction = "royalist" | "rebel" | "neutral";
 
-export type LifeStage = "child" | "adult" | "elder";
+export type LifeStage = "infant" | "child" | "adult" | "elder";
 
 export type DissentLevel = "LOW" | "MEDIUM" | "HIGH";
 
