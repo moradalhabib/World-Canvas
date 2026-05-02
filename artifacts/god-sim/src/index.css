@@ -158,7 +158,13 @@ body {
 /* ── HUD: left (needs panel) ── */
 /* Phase 17b: scaled to 60% (40% reduction) and pinned to middle-left edge.
    `transform-origin: left center` keeps the panel anchored against the
-   left margin while shrinking, instead of drifting toward the center. */
+   left margin while shrinking, instead of drifting toward the center.
+   Phase 18: opacity bumped 0.5 → 0.6 per spec. `pointer-events: auto`
+   so the panel can receive hover/click for collapse/expand — the
+   spec's "pointer-events: none on transparent areas" applies to the
+   gaps BETWEEN panels, not the panels themselves. The panel footprint
+   is tiny (~110×80px collapsed, ~110×140px expanded after the 0.6
+   scale), so it blocks a negligible slice of the map. */
 .hud-needs {
   position: absolute;
   left: 8px;
@@ -166,10 +172,7 @@ body {
   transform: translateY(-50%) scale(0.6);
   transform-origin: left center;
   width: 184px;
-  /* Phase 17b: transparent dark glass so the world stays visible through
-     the panel — was opaque charcoal gradient (Phase 15). Gold border kept
-     for the Dark Royal identity. */
-  background: rgba(20, 20, 20, 0.5);
+  background: rgba(20, 20, 20, 0.6);
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
   border: 1px solid var(--royal-gold);
@@ -178,7 +181,32 @@ body {
   box-shadow:
     0 6px 24px rgba(0, 0, 0, 0.4),
     inset 0 0 0 1px rgba(244, 207, 91, 0.18);
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.hud-needs:hover {
+  background: rgba(20, 20, 20, 0.75);
+}
+
+/* Phase 18 collapse/expand. Default = `.collapsed`: only the primary
+   row (Hunger) is shown. On hover OR when `.expanded`, all rows. */
+.hud-needs.collapsed .need-row.secondary {
+  display: none;
+}
+.hud-needs.collapsed:hover .need-row.secondary {
+  display: grid;
+}
+.hud-needs.expanded .need-row.secondary {
+  display: grid;
+}
+
+.needs-toggle-glyph {
+  float: right;
+  color: var(--royal-gold-bright);
+  font-size: 10px;
+  margin-left: 4px;
+  opacity: 0.75;
 }
 /* Phase 15: ornate corner flourishes (gold corner brackets). */
 .hud-needs::before,
@@ -599,7 +627,9 @@ body {
 /* Phase 17b: relocated from top-right to BOTTOM-right corner (above the
    time controls) and shrunk to ~20% viewport width. Background flipped
    from opaque parchment to dark transparent glass so the world is
-   visible through the menu. Text colors flipped to light-on-dark. */
+   visible through the menu. Text colors flipped to light-on-dark.
+   Phase 18: opacity 0.5 → 0.6, max-height now 25vh per spec, slim 4px
+   scrollbar (was 6px), entry cap dropped 6 → 5 in App.tsx. */
 .royal-chronicle {
   position: absolute;
   bottom: 80px;
@@ -607,9 +637,9 @@ body {
   width: 20vw;
   min-width: 200px;
   max-width: 280px;
-  max-height: 200px;
+  max-height: 25vh;
   overflow-y: auto;
-  background: rgba(20, 20, 20, 0.5);
+  background: rgba(20, 20, 20, 0.6);
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
   border: 1px solid var(--royal-gold);
@@ -622,10 +652,60 @@ body {
   box-shadow:
     0 6px 24px rgba(0, 0, 0, 0.5),
     inset 0 0 0 1px rgba(244, 207, 91, 0.18);
+  transition: max-height 0.2s ease, padding 0.2s ease;
 }
-.royal-chronicle::-webkit-scrollbar { width: 6px; }
-.royal-chronicle::-webkit-scrollbar-thumb { background: var(--royal-gold-dim); border-radius: 3px; }
+/* Phase 18 minimized state: collapse to a single title strip while
+   keeping the panel visible so the user knows where to expand from. */
+.royal-chronicle.minimized {
+  max-height: 36px;
+  padding: 6px 12px;
+  overflow: hidden;
+}
+.royal-chronicle.minimized .chronicle-title {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+/* Slim 4px scrollbar (was 6px) — meets the spec "custom styled, slim". */
+.royal-chronicle::-webkit-scrollbar { width: 4px; }
+.royal-chronicle::-webkit-scrollbar-thumb {
+  background: var(--royal-gold-dim);
+  border-radius: 2px;
+}
 .royal-chronicle::-webkit-scrollbar-track { background: transparent; }
+
+/* Phase 18: gold-leaf toggle button on the chronicle title bar. */
+.chronicle-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.chronicle-title-text {
+  flex: 1;
+  text-align: center;
+}
+.chronicle-toggle {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid rgba(244, 207, 91, 0.45);
+  border-radius: 3px;
+  color: var(--royal-gold-bright);
+  font-size: 11px;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.chronicle-toggle:hover {
+  background: rgba(244, 207, 91, 0.18);
+  transform: scale(1.1);
+}
 
 .chronicle-title {
   font-family: "Cinzel", Georgia, serif;

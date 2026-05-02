@@ -109,6 +109,11 @@ export default function App() {
 
   // Phase 5: Divine Powers UI state.
   const [openCategory, setOpenCategory] = useState<ToolbarCategory | null>(null);
+  // Phase 18: minimize/expand toggles for the side panels so the user
+  // can fully hide history and collapse the Needs panel down to a
+  // single Hunger bar (the most actionable need).
+  const [chronicleMinimized, setChronicleMinimized] = useState(false);
+  const [needsExpanded, setNeedsExpanded] = useState(false);
   const [activePower, setActivePower] = useState<DivinePower>("none");
   const [activeBrush, setActiveBrush] = useState<DivineBrush>("none");
   const [winterOn, setWinterOn] = useState(false);
@@ -204,7 +209,9 @@ export default function App() {
     setBuildingCount(state.buildings.length);
     setCitizenCount(state.citizens.length);
     setHungryCount(state.citizens.filter((cz) => cz.state === "SEEK_FOOD").length);
-    setChronicle(state.chronicle.slice(-6).reverse());
+    // Phase 18: cap visible chronicle entries to 5 (was 6) for a tighter
+    // bottom-right footprint per spec.
+    setChronicle(state.chronicle.slice(-5).reverse());
     setNobleDissent(state.nobleDissent);
     setDayNight(state.dayNight);
     setSeason(state.currentSeason);
@@ -223,7 +230,7 @@ export default function App() {
     setBuildingCount(s.buildings.length);
     setCitizenCount(s.citizens.length);
     setHungryCount(s.citizens.filter((cz) => cz.state === "SEEK_FOOD").length);
-    setChronicle(s.chronicle.slice(-6).reverse());
+    setChronicle(s.chronicle.slice(-5).reverse());
     setNobleDissent(s.nobleDissent);
     setDayNight(s.dayNight);
     setSeason(s.currentSeason);
@@ -418,15 +425,38 @@ export default function App() {
         )}
       </div>
 
-      {/* Left: needs panel (utility AI brain) */}
+      {/* Left: needs panel (utility AI brain).
+          Phase 18: collapsible. By default we render ONLY the Hunger row
+          (the most actionable need); the panel expands on hover OR when
+          `needsExpanded` is true (click to pin open, click again to
+          collapse). The CSS `:hover` rule + the `expanded` modifier
+          class both reveal `.need-row.secondary`. */}
       {civ && (
-        <div className="hud-needs">
-          <div className="needs-title">CIVIC NEEDS</div>
+        <div
+          className={`hud-needs ${needsExpanded ? "expanded" : "collapsed"}`}
+          onClick={() => setNeedsExpanded((v) => !v)}
+          role="button"
+          tabIndex={0}
+          aria-label={needsExpanded ? "Collapse Civic Needs" : "Expand Civic Needs"}
+          aria-expanded={needsExpanded}
+        >
+          <div className="needs-title">
+            CIVIC NEEDS
+            <span className="needs-toggle-glyph" aria-hidden="true">
+              {needsExpanded ? "▾" : "▸"}
+            </span>
+          </div>
           {ALL_NEEDS.map((n) => {
             const need = civ.needs[n];
             const pct = Math.max(0, Math.min(100, need.value));
+            // Hunger is always visible (primary). Everything else is a
+            // secondary row hidden until expand/hover.
+            const isPrimary = n === "hunger";
             return (
-              <div key={n} className="need-row">
+              <div
+                key={n}
+                className={`need-row ${isPrimary ? "primary" : "secondary"}`}
+              >
                 <span className="need-label" style={{ color: NEED_COLORS[n] }}>
                   {NEED_LABELS[n]}
                 </span>
@@ -598,11 +628,25 @@ export default function App() {
         </div>
       )}
 
-      {/* Right: Royal Chronicle parchment scroll (Phase 15 Dark Royal theme) */}
+      {/* Bottom-right: Royal Chronicle (Phase 17b position, Phase 18 toggle).
+          A small "gold leaf" star button on the title bar minimizes the
+          panel down to just the title strip — the user can hide history
+          completely while still seeing where the panel lives. */}
       {chronicle.length > 0 && (
-        <div className="royal-chronicle">
-          <div className="chronicle-title">✦ Royal Chronicle ✦</div>
-          {chronicle.map((e, i) => (
+        <div className={`royal-chronicle ${chronicleMinimized ? "minimized" : ""}`}>
+          <div className="chronicle-title">
+            <span className="chronicle-title-text">✦ Royal Chronicle ✦</span>
+            <button
+              className="chronicle-toggle"
+              onClick={() => setChronicleMinimized((v) => !v)}
+              aria-label={chronicleMinimized ? "Expand Royal Chronicle" : "Minimize Royal Chronicle"}
+              aria-expanded={!chronicleMinimized}
+              title={chronicleMinimized ? "Show history" : "Hide history"}
+            >
+              {chronicleMinimized ? "✦" : "❖"}
+            </button>
+          </div>
+          {!chronicleMinimized && chronicle.map((e, i) => (
             <div
               key={`${e.year}-${e.month}-${i}`}
               className="chronicle-entry"
