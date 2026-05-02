@@ -109,6 +109,9 @@ export default function App() {
   const [activePower, setActivePower] = useState<DivinePower>("none");
   const [activeBrush, setActiveBrush] = useState<DivineBrush>("none");
   const [winterOn, setWinterOn] = useState(false);
+  // Phase 10.5: FPS counter — polled from the engine in its own rAF loop so
+  // updates don't reflow the rest of the HUD on every frame.
+  const [fps, setFps] = useState<number>(0);
 
   const onCitizenTap = useCallback((info: CitizenTapInfo) => {
     const eng = engineRef.current;
@@ -223,6 +226,24 @@ export default function App() {
     };
   }, [onTimeUpdate, onCitizenTap]);
 
+  // Phase 10.5: Poll engine.getFPS() at ~4Hz from a separate rAF loop. This
+  // keeps the FPS pill responsive without re-rendering the rest of the HUD
+  // 60 times per second.
+  useEffect(() => {
+    let raf = 0;
+    let last = 0;
+    const tick = (now: number) => {
+      if (now - last > 250) {
+        const e = engineRef.current;
+        if (e) setFps(e.getFPS());
+        last = now;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   const handleTimeScale = (scale: 0 | 1 | 2) => {
     engineRef.current?.setTimeScale(scale);
     setTimeScaleState(scale);
@@ -251,6 +272,21 @@ export default function App() {
             }}
           >
             {dayNight === "night" ? "☾ NIGHT" : "☀ DAY"}
+          </span>
+          <span
+            className="hud-fps"
+            title="Frames per second"
+            style={{
+              marginLeft: 8,
+              padding: "2px 8px",
+              borderRadius: 10,
+              fontSize: 11,
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              background: fps >= 50 ? "#064e3b" : fps >= 30 ? "#78350f" : "#7f1d1d",
+              color: fps >= 50 ? "#a7f3d0" : fps >= 30 ? "#fde68a" : "#fecaca",
+            }}
+          >
+            {fps} FPS
           </span>
           {nobleDissent !== "LOW" && (
             <span

@@ -88,6 +88,21 @@ export interface GameCallbacks {
   onCitizenTap?: (info: CitizenTapInfo) => void;
 }
 
+/**
+ * Phase 10.5: Asset names registered in the procedural sprite atlas. The
+ * atlas is built once at construct time (see `buildAssets`) and consumed via
+ * `assets.get(name)` for blit-style rendering — the architectural equivalent
+ * of a single PNG atlas loader, but generated in-memory so the game has no
+ * external image dependencies.
+ */
+type AssetName =
+  | "FarmerHoe" | "FarmerHoeGold"
+  | "MinerPickaxe" | "MinerPickaxeDiamond"
+  | "GuardSpear" | "GuardShield" | "GuardShieldPlated"
+  | "ZealotCross" | "GreedyPouch"
+  | "KingCrown" | "QueenTiara"
+  | "MasterPendant";
+
 export class GameEngine {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -135,6 +150,36 @@ export class GameEngine {
   private compositeSpriteTileSize = 0;
   private readonly COMPOSITE_CACHE_MAX = 200;
 
+  /**
+   * Phase 10.5: Procedural sprite atlas. Built once at construct time, this
+   * map plays the role of a single PNG-atlas asset registry — every named
+   * accessory (FarmerHoe, KingCrown, ZealotCross, etc.) is a small offscreen
+   * canvas that the NPC compositor blits via `drawImage`. This decouples
+   * accessory drawing from per-NPC redraws and means scaling is the only
+   * per-frame cost.
+   */
+  private assets = new Map<AssetName, HTMLCanvasElement>();
+  /** Reference render scale for atlas entries; consumers rescale at draw time. */
+  private readonly ASSET_REF = 64;
+
+  /**
+   * Phase 10.5: Static terrain layer cache. The full world's base tiles +
+   * biome transitions are pre-rendered into one offscreen canvas at
+   * `terrainLayerScale` resolution. Each frame we blit the visible portion
+   * with a single drawImage call instead of looping every visible tile.
+   * `terraformTile()` patches the affected tiles incrementally so painting
+   * stays smooth.
+   */
+  private terrainLayer: HTMLCanvasElement | null = null;
+  private terrainLayerScale = 0.5; // half-scale → 100*64*0.5 = 3200px max edge
+
+  /**
+   * Phase 10.5: FPS counter. EMA over recent frame times; surfaced through
+   * `getFPS()` so the React HUD can poll without re-rendering on every frame.
+   */
+  private fpsEma = 60;
+  private fpsLastSampleAt = 0;
+
   /** Hidden land-value map driving social hierarchy. */
   private desirability!: DesirabilityMap;
   /** Months between full desirability recomputes (it's also marked dirty on builds). */
@@ -181,6 +226,10 @@ export class GameEngine {
 
     this.buildBiomePatterns();
     this.buildWaterHighlight();
+    // Phase 10.5: build the procedural sprite atlas before the first frame
+    // so accessory blits never have to wait. Terrain layer is built lazily
+    // on first render (after resize so we know the device pixel ratio).
+    this.buildAssets();
 
     // Initialize desirability map and seed with terrain + any saved buildings.
     this.desirability = new DesirabilityMap(this.state.grid.rows, this.state.grid.cols);
@@ -1056,92 +1105,61 @@ export class GameEngine {
     }
   }
 
+  /**
+   * Phase 10.5: Profession accessory — now an atlas blit. Each variant
+   * (FarmerHoe / FarmerHoeGold / MinerPickaxe / MinerPickaxeDiamond /
+   * GuardSpear+Shield) is a pre-rendered offscreen canvas; we just compute
+   * the destination rect from `ts` and draw. Master craftsmen (skill ≥ 10)
+   * receive the high-value gold/diamond variant.
+   */
   private drawAccessory(
     c: CanvasRenderingContext2D,
     cit: Citizen,
-    cx: number, bodyTop: number, bodyW: number, bodyH: number, ts: number
+    cx: number, bodyTop: number, bodyW: number, bodyH: number, ts: number,
+    master: boolean
   ) {
     const handY = bodyTop + bodyH * 0.45;
     const rightHandX = cx + bodyW * 0.55;
     const prof = cit.profession;
+    // Tool dimensions in destination space — picked to match the previous
+    // hand-drawn proportions.
+    const toolW = ts * 0.30;
+    const toolH = ts * 0.95;
+    const toolDx = rightHandX - toolW * 0.5;
+    const toolDy = handY - bodyH * 0.75;
+
     if (prof === "Farmer") {
-      // Hoe: vertical shaft + diagonal blade
-      c.strokeStyle = "#7a4a1f"; c.lineWidth = Math.max(1.5, ts * 0.04);
-      c.beginPath(); c.moveTo(rightHandX, handY - bodyH * 0.55); c.lineTo(rightHandX, handY + bodyH * 0.20); c.stroke();
-      c.fillStyle = "#9c9c9c";
-      c.beginPath();
-      c.moveTo(rightHandX, handY - bodyH * 0.5);
-      c.lineTo(rightHandX + ts * 0.10, handY - bodyH * 0.42);
-      c.lineTo(rightHandX + ts * 0.10, handY - bodyH * 0.32);
-      c.lineTo(rightHandX, handY - bodyH * 0.4);
-      c.closePath();
-      c.fill();
+      const a = this.assets.get(master ? "FarmerHoeGold" : "FarmerHoe");
+      if (a) c.drawImage(a, toolDx, toolDy, toolW, toolH);
     } else if (prof === "Miner") {
-      // Pickaxe: shaft + curved head
-      c.strokeStyle = "#7a4a1f"; c.lineWidth = Math.max(1.5, ts * 0.04);
-      c.beginPath(); c.moveTo(rightHandX, handY - bodyH * 0.5); c.lineTo(rightHandX, handY + bodyH * 0.18); c.stroke();
-      c.strokeStyle = "#5a5a5a"; c.lineWidth = Math.max(2, ts * 0.05);
-      c.beginPath();
-      c.moveTo(rightHandX - ts * 0.10, handY - bodyH * 0.55);
-      c.quadraticCurveTo(rightHandX, handY - bodyH * 0.65, rightHandX + ts * 0.10, handY - bodyH * 0.55);
-      c.stroke();
+      const a = this.assets.get(master ? "MinerPickaxeDiamond" : "MinerPickaxe");
+      if (a) c.drawImage(a, toolDx, toolDy, toolW, toolH);
     } else if (prof === "Guard") {
-      // Spear (right hand) + small round shield (left hand)
-      c.strokeStyle = "#5a3a1f"; c.lineWidth = Math.max(1.5, ts * 0.035);
-      c.beginPath(); c.moveTo(rightHandX, handY - bodyH * 0.7); c.lineTo(rightHandX, handY + bodyH * 0.25); c.stroke();
-      c.fillStyle = "#c0c0c0";
-      c.beginPath();
-      c.moveTo(rightHandX - ts * 0.04, handY - bodyH * 0.7);
-      c.lineTo(rightHandX + ts * 0.04, handY - bodyH * 0.7);
-      c.lineTo(rightHandX, handY - bodyH * 0.85);
-      c.closePath();
-      c.fill();
-      // Shield
-      c.fillStyle = "#7a3030"; c.strokeStyle = "#3a1010"; c.lineWidth = 1;
-      c.beginPath(); c.arc(cx - bodyW * 0.55, handY, ts * 0.10, 0, Math.PI * 2); c.fill(); c.stroke();
-      c.fillStyle = "#d4af37";
-      c.beginPath(); c.arc(cx - bodyW * 0.55, handY, ts * 0.03, 0, Math.PI * 2); c.fill();
+      const spear = this.assets.get("GuardSpear");
+      if (spear) c.drawImage(spear, toolDx, toolDy - bodyH * 0.10, toolW, toolH * 1.1);
+      const shieldA = this.assets.get(master ? "GuardShieldPlated" : "GuardShield");
+      if (shieldA) {
+        const sh = ts * 0.26;
+        c.drawImage(shieldA, cx - bodyW * 0.55 - sh * 0.5, handY - sh * 0.5, sh, sh);
+      }
     }
   }
 
+  /**
+   * Phase 10.5: Crown / tiara — atlas blit. The asset is rendered at
+   * ASSET_REF resolution and rescaled here to the head dimensions; this is
+   * one drawImage instead of ~12 vector ops per crown.
+   */
   private drawCrown(
     c: CanvasRenderingContext2D,
     cx: number, headCy: number, headR: number, ts: number,
     feminine = false
   ) {
-    const crownW = ts * (feminine ? 0.16 : 0.20);
-    const crownH = ts * (feminine ? 0.10 : 0.13);
+    const crownW = ts * (feminine ? 0.24 : 0.30);
+    const crownH = ts * (feminine ? 0.16 : 0.22);
     const cyTop = headCy - headR - ts * 0.02;
-    c.fillStyle = "#FFD700";
-    if (feminine) {
-      // Tiara: low arc with three points
-      c.beginPath();
-      c.moveTo(cx - crownW / 2, cyTop);
-      c.lineTo(cx - crownW * 0.25, cyTop - crownH * 0.7);
-      c.lineTo(cx, cyTop - crownH * 0.3);
-      c.lineTo(cx + crownW * 0.25, cyTop - crownH * 0.7);
-      c.lineTo(cx + crownW / 2, cyTop);
-      c.closePath();
-      c.fill();
-    } else {
-      // Classic king crown: rect base + 3 spikes + jewel
-      c.fillRect(cx - crownW / 2, cyTop - crownH * 0.4, crownW, crownH * 0.4);
-      c.beginPath();
-      c.moveTo(cx - crownW / 2, cyTop - crownH * 0.4);
-      c.lineTo(cx - crownW * 0.3, cyTop - crownH);
-      c.lineTo(cx - crownW * 0.1, cyTop - crownH * 0.4);
-      c.lineTo(cx, cyTop - crownH);
-      c.lineTo(cx + crownW * 0.1, cyTop - crownH * 0.4);
-      c.lineTo(cx + crownW * 0.3, cyTop - crownH);
-      c.lineTo(cx + crownW / 2, cyTop - crownH * 0.4);
-      c.closePath();
-      c.fill();
-      c.fillStyle = "#dc2626";
-      c.beginPath(); c.arc(cx, cyTop - crownH * 0.18, ts * 0.025, 0, Math.PI * 2); c.fill();
-    }
-    c.strokeStyle = "rgba(120,80,0,0.85)";
-    c.lineWidth = Math.max(1, ts * 0.018);
-    c.stroke();
+    const a = this.assets.get(feminine ? "QueenTiara" : "KingCrown");
+    if (a) c.drawImage(a, cx - crownW / 2, cyTop - crownH, crownW, crownH);
   }
 
   /**
@@ -1158,7 +1176,10 @@ export class GameEngine {
       this.compositeSpriteTileSize = ts;
     }
     const stage = getLifeStage(c, this.state.time.gameYear);
-    const master = (c.skills?.level ?? 1) >= 3;
+    // Phase 10.5: master tier shifted from level 3 → level 10 to match the
+    // updated mastery curve. Level-10 NPCs receive a unique gold/diamond
+    // profession-tool variant in the atlas (see drawAccessory).
+    const master = (c.skills?.level ?? 1) >= 10;
     const tierN  = c.socialTier === "king" ? 3 : c.socialTier === "noble" ? 2 : 0;
     const profN  = c.profession === "Farmer" ? 1 : c.profession === "Miner" ? 2 : c.profession === "Guard" ? 3 : 0;
     const traitN = c.trait === "Zealot" ? 1 : c.trait === "Greedy" ? 2 : c.trait === "Coward" ? 3 : c.trait === "Diligent" ? 4 : 0;
@@ -1302,17 +1323,16 @@ export class GameEngine {
       c2.strokeStyle = "rgba(0,0,0,0.5)"; c2.lineWidth = 1; c2.stroke();
     }
 
-    // ---- Profession accessory ----
-    this.drawAccessory(c2, c, cx, bodyTop, bodyW, bodyH, ts);
+    // ---- Profession accessory (atlas blit; gold/diamond if master) ----
+    this.drawAccessory(c2, c, cx, bodyTop, bodyW, bodyH, ts, master);
 
-    // ---- Master ring (skill ≥ 3): gold pendant on chest ----
-    if (master && !c.trait) {
-      // skip if trait pendant already there
-    }
+    // ---- Master pendant (skill ≥ 10): gold medallion on chest, atlas blit ----
     if (master) {
-      c2.fillStyle = "#ffd84a";
-      c2.beginPath(); c2.arc(cx + bodyW * 0.18, bodyTop + ts * 0.06, ts * 0.035, 0, Math.PI * 2); c2.fill();
-      c2.strokeStyle = "rgba(120,80,0,0.85)"; c2.lineWidth = 1; c2.stroke();
+      const pendant = this.assets.get("MasterPendant");
+      if (pendant) {
+        const ph = ts * 0.13;
+        c2.drawImage(pendant, cx + bodyW * 0.10 - ph * 0.5, bodyTop + ts * 0.02, ph, ph);
+      }
     }
 
     // ---- Royal crown ----
@@ -1744,6 +1764,367 @@ export class GameEngine {
     this.clampCamera();
   }
 
+  // --------------------------------------------------------------------
+  // Phase 10.5: Procedural sprite atlas (the "asset map")
+  // --------------------------------------------------------------------
+
+  /** Allocate a fresh offscreen canvas and run a draw routine into it. */
+  private makeAsset(
+    w: number, h: number,
+    draw: (g: CanvasRenderingContext2D) => void
+  ): HTMLCanvasElement {
+    const cv = document.createElement("canvas");
+    cv.width = Math.max(1, Math.ceil(w));
+    cv.height = Math.max(1, Math.ceil(h));
+    const g = cv.getContext("2d")!;
+    draw(g);
+    return cv;
+  }
+
+  /**
+   * Build every named accessory canvas once and cache it in `this.assets`.
+   * All artwork is drawn against ASSET_REF (64) so consumers can pick any
+   * destination size and scale via drawImage. Switching to atlas blits frees
+   * the per-NPC compositor from re-running primitive draws for accessories.
+   */
+  private buildAssets() {
+    const R = this.ASSET_REF;
+    this.assets.clear();
+
+    // ---- FarmerHoe (wood shaft + iron blade) ----
+    this.assets.set("FarmerHoe", this.makeAsset(R * 0.30, R * 0.95, (g) => {
+      const W = R * 0.30, H = R * 0.95;
+      g.strokeStyle = "#7a4a1f"; g.lineWidth = Math.max(1.5, R * 0.04);
+      g.beginPath(); g.moveTo(W * 0.5, H * 0.10); g.lineTo(W * 0.5, H); g.stroke();
+      g.fillStyle = "#9c9c9c";
+      g.beginPath();
+      g.moveTo(W * 0.5, H * 0.10);
+      g.lineTo(W, H * 0.18);
+      g.lineTo(W, H * 0.28);
+      g.lineTo(W * 0.5, H * 0.20);
+      g.closePath();
+      g.fill();
+      g.strokeStyle = "rgba(0,0,0,0.4)"; g.lineWidth = 1; g.stroke();
+    }));
+
+    // ---- FarmerHoeGold (master variant: gold blade + bound shaft) ----
+    this.assets.set("FarmerHoeGold", this.makeAsset(R * 0.30, R * 0.95, (g) => {
+      const W = R * 0.30, H = R * 0.95;
+      // Darker shaft, gold ferrule
+      g.strokeStyle = "#5a3a1f"; g.lineWidth = Math.max(1.5, R * 0.04);
+      g.beginPath(); g.moveTo(W * 0.5, H * 0.10); g.lineTo(W * 0.5, H); g.stroke();
+      g.strokeStyle = "#d4af37"; g.lineWidth = Math.max(1, R * 0.025);
+      g.beginPath(); g.moveTo(W * 0.35, H * 0.30); g.lineTo(W * 0.65, H * 0.30); g.stroke();
+      g.beginPath(); g.moveTo(W * 0.35, H * 0.85); g.lineTo(W * 0.65, H * 0.85); g.stroke();
+      // Gold blade with shine
+      const grad = g.createLinearGradient(0, 0, W, 0);
+      grad.addColorStop(0, "#fde68a"); grad.addColorStop(0.5, "#f4cf5b"); grad.addColorStop(1, "#a07a1b");
+      g.fillStyle = grad;
+      g.beginPath();
+      g.moveTo(W * 0.5, H * 0.08);
+      g.lineTo(W, H * 0.16);
+      g.lineTo(W, H * 0.30);
+      g.lineTo(W * 0.5, H * 0.22);
+      g.closePath();
+      g.fill();
+      g.strokeStyle = "rgba(80,50,0,0.7)"; g.lineWidth = 1; g.stroke();
+    }));
+
+    // ---- MinerPickaxe (curved iron head) ----
+    this.assets.set("MinerPickaxe", this.makeAsset(R * 0.34, R * 0.95, (g) => {
+      const W = R * 0.34, H = R * 0.95;
+      g.strokeStyle = "#7a4a1f"; g.lineWidth = Math.max(1.5, R * 0.04);
+      g.beginPath(); g.moveTo(W * 0.5, H * 0.20); g.lineTo(W * 0.5, H); g.stroke();
+      g.strokeStyle = "#5a5a5a"; g.lineWidth = Math.max(2, R * 0.06);
+      g.beginPath();
+      g.moveTo(0, H * 0.18);
+      g.quadraticCurveTo(W * 0.5, H * 0.02, W, H * 0.18);
+      g.stroke();
+      // Subtle highlight tip
+      g.strokeStyle = "rgba(255,255,255,0.35)"; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(W * 0.10, H * 0.13); g.lineTo(W * 0.30, H * 0.07); g.stroke();
+    }));
+
+    // ---- MinerPickaxeDiamond (master variant: diamond/sapphire head) ----
+    this.assets.set("MinerPickaxeDiamond", this.makeAsset(R * 0.34, R * 0.95, (g) => {
+      const W = R * 0.34, H = R * 0.95;
+      g.strokeStyle = "#5a3a1f"; g.lineWidth = Math.max(1.5, R * 0.04);
+      g.beginPath(); g.moveTo(W * 0.5, H * 0.20); g.lineTo(W * 0.5, H); g.stroke();
+      g.strokeStyle = "#d4af37"; g.lineWidth = Math.max(1, R * 0.025);
+      g.beginPath(); g.moveTo(W * 0.35, H * 0.35); g.lineTo(W * 0.65, H * 0.35); g.stroke();
+      // Cyan/diamond head
+      g.fillStyle = "#7dd3fc";
+      g.beginPath();
+      g.moveTo(0, H * 0.18);
+      g.quadraticCurveTo(W * 0.5, H * 0.02, W, H * 0.18);
+      g.lineTo(W * 0.85, H * 0.28);
+      g.quadraticCurveTo(W * 0.5, H * 0.14, W * 0.15, H * 0.28);
+      g.closePath();
+      g.fill();
+      g.strokeStyle = "#0c4a6e"; g.lineWidth = 1; g.stroke();
+      g.fillStyle = "rgba(255,255,255,0.7)";
+      g.beginPath(); g.arc(W * 0.35, H * 0.13, R * 0.025, 0, Math.PI * 2); g.fill();
+    }));
+
+    // ---- GuardSpear (shaft + steel head) ----
+    this.assets.set("GuardSpear", this.makeAsset(R * 0.16, R * 1.00, (g) => {
+      const W = R * 0.16, H = R * 1.00;
+      g.strokeStyle = "#5a3a1f"; g.lineWidth = Math.max(1.5, R * 0.035);
+      g.beginPath(); g.moveTo(W * 0.5, H * 0.08); g.lineTo(W * 0.5, H); g.stroke();
+      g.fillStyle = "#c0c0c0";
+      g.beginPath();
+      g.moveTo(0, H * 0.10);
+      g.lineTo(W, H * 0.10);
+      g.lineTo(W * 0.5, 0);
+      g.closePath();
+      g.fill();
+      g.strokeStyle = "rgba(0,0,0,0.5)"; g.lineWidth = 1; g.stroke();
+    }));
+
+    // ---- GuardShield (round, painted red, gold boss) ----
+    this.assets.set("GuardShield", this.makeAsset(R * 0.30, R * 0.30, (g) => {
+      const S = R * 0.30, c = S / 2;
+      g.fillStyle = "#7a3030";
+      g.beginPath(); g.arc(c, c, c - 1, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = "#3a1010"; g.lineWidth = 1.5; g.stroke();
+      g.fillStyle = "#d4af37";
+      g.beginPath(); g.arc(c, c, c * 0.30, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = "rgba(80,50,0,0.7)"; g.stroke();
+    }));
+
+    // ---- GuardShieldPlated (master: steel face + gold rim + cross emblem) ----
+    this.assets.set("GuardShieldPlated", this.makeAsset(R * 0.30, R * 0.30, (g) => {
+      const S = R * 0.30, c = S / 2;
+      const grad = g.createRadialGradient(c, c * 0.7, c * 0.1, c, c, c);
+      grad.addColorStop(0, "#e5e7eb"); grad.addColorStop(1, "#6b7280");
+      g.fillStyle = grad;
+      g.beginPath(); g.arc(c, c, c - 1, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = "#d4af37"; g.lineWidth = 2;
+      g.beginPath(); g.arc(c, c, c - 1.5, 0, Math.PI * 2); g.stroke();
+      // Cross emblem
+      g.fillStyle = "#7a3030";
+      g.fillRect(c - S * 0.05, c - S * 0.30, S * 0.10, S * 0.55);
+      g.fillRect(c - S * 0.25, c - S * 0.05, S * 0.50, S * 0.10);
+    }));
+
+    // ---- ZealotCross (gold latin cross with depth) ----
+    this.assets.set("ZealotCross", this.makeAsset(R * 0.18, R * 0.22, (g) => {
+      const W = R * 0.18, H = R * 0.22;
+      g.fillStyle = "#d4af37";
+      g.fillRect(W * 0.42, 0, W * 0.16, H);
+      g.fillRect(W * 0.20, H * 0.30, W * 0.60, W * 0.16);
+      g.strokeStyle = "rgba(80,50,0,0.85)"; g.lineWidth = 1;
+      g.strokeRect(W * 0.42, 0, W * 0.16, H);
+      g.strokeRect(W * 0.20, H * 0.30, W * 0.60, W * 0.16);
+    }));
+
+    // ---- GreedyPouch (leather purse with gold coin) ----
+    this.assets.set("GreedyPouch", this.makeAsset(R * 0.20, R * 0.22, (g) => {
+      const W = R * 0.20, H = R * 0.22;
+      g.fillStyle = "#6b4f12";
+      g.beginPath(); g.ellipse(W / 2, H * 0.55, W * 0.45, H * 0.40, 0, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = "rgba(0,0,0,0.55)"; g.lineWidth = 1; g.stroke();
+      // Drawstring
+      g.strokeStyle = "#3b2a08"; g.lineWidth = 1.2;
+      g.beginPath(); g.moveTo(W * 0.30, H * 0.18); g.lineTo(W * 0.70, H * 0.18); g.stroke();
+      // Gold coin
+      g.fillStyle = "#f4cf5b";
+      g.beginPath(); g.arc(W * 0.5, H * 0.55, W * 0.20, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = "rgba(120,80,0,0.85)"; g.stroke();
+    }));
+
+    // ---- KingCrown (gold base + 3 spikes + ruby) ----
+    this.assets.set("KingCrown", this.makeAsset(R * 0.30, R * 0.22, (g) => {
+      const W = R * 0.30, H = R * 0.22;
+      g.fillStyle = "#FFD700";
+      g.fillRect(0, H * 0.55, W, H * 0.30);
+      g.beginPath();
+      g.moveTo(0, H * 0.55);
+      g.lineTo(W * 0.20, 0);
+      g.lineTo(W * 0.40, H * 0.55);
+      g.lineTo(W * 0.50, 0);
+      g.lineTo(W * 0.60, H * 0.55);
+      g.lineTo(W * 0.80, 0);
+      g.lineTo(W, H * 0.55);
+      g.closePath(); g.fill();
+      g.strokeStyle = "rgba(120,80,0,0.9)"; g.lineWidth = 1.2; g.stroke();
+      // Ruby in center
+      g.fillStyle = "#dc2626";
+      g.beginPath(); g.arc(W / 2, H * 0.70, R * 0.030, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = "rgba(80,0,0,0.8)"; g.lineWidth = 1; g.stroke();
+    }));
+
+    // ---- QueenTiara (delicate arc with three points) ----
+    this.assets.set("QueenTiara", this.makeAsset(R * 0.24, R * 0.16, (g) => {
+      const W = R * 0.24, H = R * 0.16;
+      g.fillStyle = "#FFD700";
+      g.beginPath();
+      g.moveTo(0, H * 0.85);
+      g.lineTo(W * 0.25, H * 0.20);
+      g.lineTo(W * 0.50, H * 0.55);
+      g.lineTo(W * 0.75, H * 0.20);
+      g.lineTo(W, H * 0.85);
+      g.closePath(); g.fill();
+      g.strokeStyle = "rgba(120,80,0,0.9)"; g.lineWidth = 1.2; g.stroke();
+      g.fillStyle = "#dc2626";
+      g.beginPath(); g.arc(W * 0.50, H * 0.45, R * 0.015, 0, Math.PI * 2); g.fill();
+    }));
+
+    // ---- MasterPendant (gold medallion on chest) ----
+    this.assets.set("MasterPendant", this.makeAsset(R * 0.13, R * 0.13, (g) => {
+      const S = R * 0.13, c = S / 2;
+      const grad = g.createRadialGradient(c * 0.8, c * 0.8, c * 0.1, c, c, c);
+      grad.addColorStop(0, "#fde68a"); grad.addColorStop(1, "#a07a1b");
+      g.fillStyle = grad;
+      g.beginPath(); g.arc(c, c, c - 0.5, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = "rgba(120,80,0,0.85)"; g.lineWidth = 1; g.stroke();
+      // Star inside
+      g.fillStyle = "#7a4a1f";
+      g.beginPath();
+      for (let i = 0; i < 5; i++) {
+        const a = -Math.PI / 2 + (i * Math.PI * 2) / 5;
+        const x = c + Math.cos(a) * c * 0.5;
+        const y = c + Math.sin(a) * c * 0.5;
+        if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.closePath(); g.fill();
+    }));
+  }
+
+  // --------------------------------------------------------------------
+  // Phase 10.5: Static terrain layer (single offscreen canvas)
+  // --------------------------------------------------------------------
+
+  /**
+   * Pre-render the entire world's base tiles + biome transitions into one
+   * offscreen canvas. Subsequent frames blit a sub-rect of this canvas
+   * instead of looping every visible tile. Built at half resolution to keep
+   * memory under control on mobile (100*64*0.5 = 3200px max edge → ~40MB).
+   */
+  private rebuildTerrainLayer() {
+    const grid = this.state.grid;
+    const ts = grid.tileSize;
+    const s = this.terrainLayerScale;
+    const W = Math.ceil(grid.cols * ts * s);
+    const H = Math.ceil(grid.rows * ts * s);
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const g = cv.getContext("2d")!;
+    g.imageSmoothingEnabled = true;
+    // Render at scaled tile size; biome patterns repeat seamlessly so a
+    // smaller tile rect just samples a smaller portion of the same pattern.
+    g.scale(s, s);
+    const ew = Math.max(2, ts * 0.18);
+    for (let r = 0; r < grid.rows; r++) {
+      for (let c = 0; c < grid.cols; c++) {
+        const tile = grid.tiles[r][c];
+        const px = c * ts;
+        const py = r * ts;
+        const pat = this.biomePatterns.get(tile.type);
+        if (pat) {
+          g.fillStyle = pat;
+          g.save();
+          g.translate(px, py);
+          g.fillRect(0, 0, ts, ts);
+          g.restore();
+        } else {
+          g.fillStyle = TILE_COLORS[tile.type];
+          g.fillRect(px, py, ts, ts);
+        }
+      }
+    }
+    // Transitions in a second pass so neighbour reads see final tile types.
+    for (let r = 0; r < grid.rows; r++) {
+      for (let c = 0; c < grid.cols; c++) {
+        const tile = grid.tiles[r][c];
+        const px = c * ts;
+        const py = r * ts;
+        if (r > 0) {
+          const tc = getTransitionColor(tile.type, grid.tiles[r - 1][c].type);
+          if (tc) g.drawImage(this.getTransitionStrip(tc, "t"), px, py);
+        }
+        if (r < grid.rows - 1) {
+          const tc = getTransitionColor(tile.type, grid.tiles[r + 1][c].type);
+          if (tc) g.drawImage(this.getTransitionStrip(tc, "b"), px, py + ts - ew);
+        }
+        if (c > 0) {
+          const tc = getTransitionColor(tile.type, grid.tiles[r][c - 1].type);
+          if (tc) g.drawImage(this.getTransitionStrip(tc, "l"), px, py);
+        }
+        if (c < grid.cols - 1) {
+          const tc = getTransitionColor(tile.type, grid.tiles[r][c + 1].type);
+          if (tc) g.drawImage(this.getTransitionStrip(tc, "r"), px + ts - ew, py);
+        }
+      }
+    }
+    this.terrainLayer = cv;
+  }
+
+  /**
+   * Incrementally patch the terrain layer for one tile and its 4 neighbours
+   * (so transition strips on both sides of the painted tile stay correct).
+   * Avoids the cost of a full rebuild during architect-mode painting.
+   */
+  private redrawTerrainTile(row: number, col: number) {
+    if (!this.terrainLayer) return;
+    const grid = this.state.grid;
+    const ts = grid.tileSize;
+    const g = this.terrainLayer.getContext("2d")!;
+    const s = this.terrainLayerScale;
+    const ew = Math.max(2, ts * 0.18);
+    g.save();
+    g.scale(s, s);
+
+    const tilesToRedraw: Array<[number, number]> = [
+      [row, col],
+      [row - 1, col], [row + 1, col],
+      [row, col - 1], [row, col + 1],
+    ];
+    for (const [r, c] of tilesToRedraw) {
+      if (r < 0 || c < 0 || r >= grid.rows || c >= grid.cols) continue;
+      const tile = grid.tiles[r][c];
+      const px = c * ts;
+      const py = r * ts;
+      // Clear (in scaled space) and re-fill base
+      g.clearRect(px, py, ts, ts);
+      const pat = this.biomePatterns.get(tile.type);
+      if (pat) {
+        g.fillStyle = pat;
+        g.save(); g.translate(px, py); g.fillRect(0, 0, ts, ts); g.restore();
+      } else {
+        g.fillStyle = TILE_COLORS[tile.type];
+        g.fillRect(px, py, ts, ts);
+      }
+      // Transitions for this tile
+      if (r > 0) {
+        const tc = getTransitionColor(tile.type, grid.tiles[r - 1][c].type);
+        if (tc) g.drawImage(this.getTransitionStrip(tc, "t"), px, py);
+      }
+      if (r < grid.rows - 1) {
+        const tc = getTransitionColor(tile.type, grid.tiles[r + 1][c].type);
+        if (tc) g.drawImage(this.getTransitionStrip(tc, "b"), px, py + ts - ew);
+      }
+      if (c > 0) {
+        const tc = getTransitionColor(tile.type, grid.tiles[r][c - 1].type);
+        if (tc) g.drawImage(this.getTransitionStrip(tc, "l"), px, py);
+      }
+      if (c < grid.cols - 1) {
+        const tc = getTransitionColor(tile.type, grid.tiles[r][c + 1].type);
+        if (tc) g.drawImage(this.getTransitionStrip(tc, "r"), px + ts - ew, py);
+      }
+    }
+    g.restore();
+  }
+
+  /**
+   * Phase 10.5: Public — rounded current FPS reading (EMA over recent frames).
+   * The React HUD polls this from a separate rAF loop so a value change
+   * never triggers a re-render of unrelated game state.
+   */
+  public getFPS(): number {
+    return Math.round(this.fpsEma);
+  }
+
   private start() {
     this.lastFrameTime = performance.now();
     this.lastSaveTime = performance.now();
@@ -1753,6 +2134,16 @@ export class GameEngine {
   private loop = (now: number) => {
     const dt = now - this.lastFrameTime;
     this.lastFrameTime = now;
+
+    // Phase 10.5: FPS EMA. Clamp dt to a sane band so a single GC stall
+    // doesn't pull the average to 1 FPS for several seconds.
+    if (dt > 0 && dt < 1000) {
+      const inst = 1000 / dt;
+      // Heavier weight when we have no sample yet, then settle to a 90/10 EMA.
+      const a = this.fpsLastSampleAt === 0 ? 1 : 0.1;
+      this.fpsEma = this.fpsEma * (1 - a) + inst * a;
+      this.fpsLastSampleAt = now;
+    }
 
     this.tickTime(dt);
     this.tickCitizenMovement(dt);
@@ -1832,62 +2223,39 @@ export class GameEngine {
     );
 
     const useTextures = cam.zoom > 0.35;
-    const edgeWidth = Math.max(2, ts * 0.18);
 
-    // Pass 1: base tile fills (with cached texture patterns)
-    for (let r = startRow; r <= endRow; r++) {
-      for (let c = startCol; c <= endCol; c++) {
-        const tile = grid.tiles[r][c];
-        const px = c * ts;
-        const py = r * ts;
+    // Phase 10.5: Static terrain layer. Build lazily on first frame, then
+    // blit a single image per frame instead of looping every visible tile.
+    // The layer holds base tiles + biome transitions at half-scale; the
+    // browser scales it back up via image smoothing so it stays crisp at
+    // typical zoom levels and gets only slightly soft when zoomed in past
+    // 1.5×, which actually helps mask tile seams.
+    if (!this.terrainLayer) this.rebuildTerrainLayer();
 
-        if (useTextures) {
-          const pat = this.biomePatterns.get(tile.type);
-          if (pat) {
-            ctx.fillStyle = pat;
-            ctx.save();
-            ctx.translate(px, py);
-            ctx.fillRect(0, 0, ts, ts);
-            ctx.restore();
-          } else {
-            ctx.fillStyle = TILE_COLORS[tile.type];
-            ctx.fillRect(px, py, ts, ts);
-          }
-        } else {
-          ctx.fillStyle = TILE_COLORS[tile.type];
-          ctx.fillRect(px, py, ts, ts);
-        }
-      }
-    }
-
-    // Pass 2: auto-tile biome transitions (uses pre-baked cached strips)
-    if (cam.zoom > 0.4) {
+    if (useTextures && this.terrainLayer) {
+      const layerScale = this.terrainLayerScale;
+      const sx = Math.max(0, startCol * ts * layerScale);
+      const sy = Math.max(0, startRow * ts * layerScale);
+      const sw = Math.min(
+        this.terrainLayer.width - sx,
+        (endCol - startCol + 1) * ts * layerScale
+      );
+      const sh = Math.min(
+        this.terrainLayer.height - sy,
+        (endRow - startRow + 1) * ts * layerScale
+      );
+      const dx = startCol * ts;
+      const dy = startRow * ts;
+      const dw = (endCol - startCol + 1) * ts;
+      const dh = (endRow - startRow + 1) * ts;
+      ctx.drawImage(this.terrainLayer, sx, sy, sw, sh, dx, dy, dw, dh);
+    } else {
+      // Low-zoom fallback: solid color fills only (no patterns / transitions)
       for (let r = startRow; r <= endRow; r++) {
         for (let c = startCol; c <= endCol; c++) {
           const tile = grid.tiles[r][c];
-          const px = c * ts;
-          const py = r * ts;
-
-          if (r > 0) {
-            const n = grid.tiles[r - 1][c];
-            const tc = getTransitionColor(tile.type, n.type);
-            if (tc) ctx.drawImage(this.getTransitionStrip(tc, "t"), px, py);
-          }
-          if (r < grid.rows - 1) {
-            const n = grid.tiles[r + 1][c];
-            const tc = getTransitionColor(tile.type, n.type);
-            if (tc) ctx.drawImage(this.getTransitionStrip(tc, "b"), px, py + ts - edgeWidth);
-          }
-          if (c > 0) {
-            const n = grid.tiles[r][c - 1];
-            const tc = getTransitionColor(tile.type, n.type);
-            if (tc) ctx.drawImage(this.getTransitionStrip(tc, "l"), px, py);
-          }
-          if (c < grid.cols - 1) {
-            const n = grid.tiles[r][c + 1];
-            const tc = getTransitionColor(tile.type, n.type);
-            if (tc) ctx.drawImage(this.getTransitionStrip(tc, "r"), px + ts - edgeWidth, py);
-          }
+          ctx.fillStyle = TILE_COLORS[tile.type];
+          ctx.fillRect(c * ts, r * ts, ts, ts);
         }
       }
     }
@@ -2364,6 +2732,9 @@ export class GameEngine {
     else tile.fertility = 0;
     this.invalidatePathsThrough([{ row, col }]);
     this.desirability.markDirty();
+    // Phase 10.5: incrementally patch the terrain layer cache so the user
+    // sees the result immediately without paying for a full rebuild.
+    this.redrawTerrainTile(row, col);
   }
 
   /** Judge / Smite: lightning kills an NPC outright. */
@@ -2430,6 +2801,9 @@ export class GameEngine {
         if (tile.type !== "water") {
           tile.type = "crater";
           tile.fertility = 0;
+          // Phase 10.5: keep the static terrain layer in sync — meteor
+          // bypasses terraformTile(), so patch the cache directly.
+          this.redrawTerrainTile(r, c);
         }
         changed.push({ row: r, col: c });
       }
