@@ -55,6 +55,38 @@ export interface GameState {
   lastDayNightFlipMonth: number;
   /** Phase 5: Chronomancer Winter mode — halts crops and doubles hunger. */
   winterActive: boolean;
+  /* -- Phase 13: Dynamic Climate & Ecosystem Engine -- */
+  /** Macro-cycle derived from gameMonth (Mar-May Spring, Jun-Aug Summer, Sep-Nov Autumn, Dec-Feb Winter). */
+  currentSeason: Season;
+  /** Current weather state. Re-rolled at the start of each game-day (dawn). */
+  currentWeather: WeatherKind;
+  /** Absolute month index (year * 12 + month) at which weather was last re-rolled. */
+  lastWeatherRollMonth: number;
+}
+
+/* ── Phase 13: Dynamic Climate & Ecosystem Engine ── */
+
+export type Season = "SPRING" | "SUMMER" | "AUTUMN" | "WINTER";
+
+export type WeatherKind = "CLEAR" | "RAIN" | "SNOW" | "THUNDERSTORM";
+
+/**
+ * Lightweight particle for the weather VFX pool. Rendered in screen-space
+ * (no camera transform) so wind/snow direction is independent of pan/zoom.
+ * Capped at PARTICLE_MAX in GameEngine to protect mobile FPS.
+ */
+export interface Particle {
+  kind: "rain" | "snow";
+  /** Screen-space pixel coordinates. */
+  x: number;
+  y: number;
+  /** Pixel velocity per millisecond. */
+  vx: number;
+  vy: number;
+  /** Snow only: anchor x for the sine wobble. */
+  baseX?: number;
+  /** Snow only: wobble phase in radians. */
+  phase?: number;
 }
 
 export const TILE_COLORS: Record<TileType, string> = {

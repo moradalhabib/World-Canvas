@@ -5,12 +5,13 @@ import {
   SPECKLE_DENSITY,
   getTransitionColor,
 } from "./types";
-import type { Building, GameState, TileType } from "./types";
+import type { Building, GameState, Particle as WeatherParticle, Season, TileType, WeatherKind } from "./types";
 import {
   createDefaultState,
   saveState,
   loadState,
   applyOfflineProgression,
+  monthToSeason,
 } from "./storage";
 import { getBuildingDef } from "./buildings";
 import { tickCivilizationMonth } from "./civilization";
@@ -26,6 +27,8 @@ import {
   runRumorMill,
   processDayWake,
   recordCombatWitnesses,
+  // Phase 13: Climate Engine
+  traumatizeAdjacent,
 } from "./npc";
 import { findPath } from "./pathfinding";
 import { tickYear as tickRoyalYear, getLifeStage, notifyDeath, addChronicle, ensureMonarch } from "./royalty";
@@ -36,6 +39,25 @@ const COMBAT_RADIUS_TILES = 2;
 const COMBAT_DURATION_MS = 900;
 const SPARK_LIFE_MS = 450;
 const SPARKS_PER_FRAME = 1;
+
+/* ---------- Phase 13: Climate & Weather tunables ----------
+ * The particle pool is hard-capped to keep mobile FPS stable.
+ * Spawn rates are per-millisecond, scaled by dt each frame, then
+ * Math.floor'd against an accumulator so we don't lose fractional spawns.
+ */
+const PARTICLE_MAX = 200;
+const PARTICLE_SPAWN_PER_MS_RAIN = 0.30;        // ~18 drops/frame at 60 FPS
+const PARTICLE_SPAWN_PER_MS_SNOW = 0.10;        // ~6 flakes/frame at 60 FPS
+const PARTICLE_SPAWN_PER_MS_THUNDERSTORM = 0.40;
+const RAIN_VY = 1.4;                            // px/ms (≈ 84 px/frame at 60 FPS)
+const RAIN_VX = -0.35;                          // negative = wind from upper-right
+const SNOW_VY = 0.18;                           // px/ms — slow drifters
+const SNOW_WOBBLE_AMP = 14;                     // px sine amplitude
+const SNOW_WOBBLE_FREQ_RAD_PER_MS = 0.0035;     // ~0.5 Hz
+const LIGHTNING_FLASH_CHANCE_PER_FRAME = 0.01;  // 1% per frame in THUNDERSTORM
+const LIGHTNING_STRIKE_CHANCE_PER_FRAME = 0.0015; // ~1 in 670 frames (≈ 11s @ 60 FPS)
+const LIGHTNING_FLASH_MS = 180;                 // duration of the white overlay
+const LIGHTNING_COOLDOWN_MS = 1200;             // min gap between flashes
 
 /* ---------- Phase 13: True 2:1 dimetric isometric projection ----------
  * Standard "Age of Empires" iso: each tile is a diamond `ts` wide and
@@ -232,6 +254,19 @@ export class GameEngine {
    */
   private rumorAccMs = 0;
 
+  /* ---------- Phase 13: Climate Engine runtime state ----------
+   * The particle pool, lightning timers, and spawn accumulators all live
+   * on the engine — none of these need to persist across reloads (the
+   * weather kind itself is on GameState, but particles re-seed instantly
+   * on the next frame). Keeping them off GameState avoids serialization
+   * churn and lets us hard-cap the array length without migration logic.
+   */
+  private weatherParticles: WeatherParticle[] = [];
+  private weatherSpawnAcc = 0;          // fractional spawn carry-over
+  private lightningFlashUntilMs = 0;    // wall-clock ms while screen flashes white
+  private lastLightningStrikeMs = 0;    // throttle for back-to-back strikes
+  private lastSeasonSeen: Season | null = null; // detect season transitions for chronicles
+
   /** Hidden land-value map driving social hierarchy. */
   private desirability!: DesirabilityMap;
   /** Months between full desirability recomputes (it's also marked dirty on builds). */
@@ -336,10 +371,34 @@ export class GameEngine {
       this.monthsSinceDesirRecompute = 0;
     }
 
+    // Phase 13: keep the season in sync with gameMonth at the START of every
+    // month-tick. Without this, boundary months (e.g. the moment we cross
+    // from Feb→Mar) would simulate crops/mood under the OLD season because
+    // the daily refresh in tickDayNight() doesn't fire until the next dawn.
+    // Weather is NOT re-rolled here — that stays a per-day event at dawn.
+    const liveSeason = monthToSeason(this.state.time.gameMonth);
+    if (liveSeason !== this.state.currentSeason) {
+      const prev = this.state.currentSeason;
+      this.state.currentSeason = liveSeason;
+      addChronicle(
+        this.state,
+        `The realm turns from ${prev.toLowerCase()} to ${liveSeason.toLowerCase()}.`
+      );
+      this.lastSeasonSeen = liveSeason;
+    }
+
     tickCivilizationMonth(
       this.state.civilization,
       this.state.buildings,
-      this.state.winterActive
+      this.state.winterActive,
+      // Phase 13: seasonal crop multiplier. Spring/Autumn = 1.5x harvest
+      // bonus; Summer baseline; Winter halts crops entirely.
+      this.state.currentSeason === "WINTER"
+        ? 0
+        : this.state.currentSeason === "SPRING" ||
+            this.state.currentSeason === "AUTUMN"
+          ? 1.5
+          : 1
     );
 
     tryUpgradeHouses(this.state.buildings, this.state.civilization, this.desirability);
@@ -447,9 +506,291 @@ export class GameEngine {
     } else {
       this.state.dayNight = "day";
       processDayWake(this.state);
+      // Phase 13: dawn = "new game-day". Recompute season from gameMonth and
+      // re-roll the daily weather. Season transitions write a chronicle entry.
+      this.refreshSeasonAndWeather();
     }
     this.state.lastDayNightFlipMonth =
       this.state.time.gameYear * 12 + this.state.time.gameMonth;
+  }
+
+  /* -------------------------------------------------------------------- */
+  /*  Phase 13: Dynamic Climate & Ecosystem Engine                        */
+  /* -------------------------------------------------------------------- */
+
+  /**
+   * Recompute the current season from gameMonth and roll a new daily weather
+   * kind from the season's lookup table. Called once per dawn (transition
+   * to "day"). Season changes are chronicled; weather changes are silent
+   * (the HUD pill is the player's signal).
+   */
+  private refreshSeasonAndWeather(): void {
+    // Season is kept in sync inside simulateMonth() too, so by the time
+    // we reach dawn, currentSeason is already correct. Re-derive defensively
+    // here in case dawn fires through some path that bypasses simulateMonth.
+    const newSeason = monthToSeason(this.state.time.gameMonth);
+    if (this.lastSeasonSeen === null) {
+      this.lastSeasonSeen = this.state.currentSeason;
+    }
+    if (newSeason !== this.state.currentSeason) {
+      this.state.currentSeason = newSeason;
+      this.lastSeasonSeen = newSeason;
+    }
+
+    // Per-season weather pool. Probabilities sum to 1 within each row.
+    //   Spring : mostly clear, plenty of rain, no snow, occasional storms.
+    //   Summer : dominated by clear skies, light rain, rare thunderstorms.
+    //   Autumn : balanced clear/rain, some thunder, no snow.
+    //   Winter : snow-heavy, some clear days, no rain (rain freezes), no thunder.
+    let pool: { kind: WeatherKind; weight: number }[];
+    switch (newSeason) {
+      case "SPRING":
+        pool = [
+          { kind: "CLEAR", weight: 0.45 },
+          { kind: "RAIN", weight: 0.40 },
+          { kind: "THUNDERSTORM", weight: 0.15 },
+        ];
+        break;
+      case "SUMMER":
+        pool = [
+          { kind: "CLEAR", weight: 0.70 },
+          { kind: "RAIN", weight: 0.20 },
+          { kind: "THUNDERSTORM", weight: 0.10 },
+        ];
+        break;
+      case "AUTUMN":
+        pool = [
+          { kind: "CLEAR", weight: 0.45 },
+          { kind: "RAIN", weight: 0.35 },
+          { kind: "THUNDERSTORM", weight: 0.20 },
+        ];
+        break;
+      case "WINTER":
+      default:
+        pool = [
+          { kind: "CLEAR", weight: 0.45 },
+          { kind: "SNOW", weight: 0.55 },
+        ];
+        break;
+    }
+
+    const r = Math.random();
+    let cum = 0;
+    let pick: WeatherKind = "CLEAR";
+    for (const e of pool) {
+      cum += e.weight;
+      if (r <= cum) { pick = e.kind; break; }
+    }
+    if (pick !== this.state.currentWeather) {
+      // Drop any in-flight particles whose kind no longer matches the new
+      // weather — leaving stale rain falling under a CLEAR sky looks broken.
+      const expectedKind = pick === "SNOW" ? "snow" : "rain";
+      this.weatherParticles = this.weatherParticles.filter(
+        (p) => pick === "CLEAR" ? false : p.kind === expectedKind
+      );
+    }
+    this.state.currentWeather = pick;
+    this.state.lastWeatherRollMonth =
+      this.state.time.gameYear * 12 + this.state.time.gameMonth;
+  }
+
+  /**
+   * Per-frame climate tick: spawn / advect / cull weather particles, and
+   * roll thunderstorm lightning. Cheap when CLEAR (early-out + drains the
+   * pool). Particle math is kept in screen-space so the wind direction is
+   * camera-independent — pan/zoom never warps the rain angle.
+   */
+  private tickClimate(dtMs: number): void {
+    const W = this.canvas.clientWidth;
+    const H = this.canvas.clientHeight;
+    const weather = this.state.currentWeather;
+
+    // 1. Spawn budget for this frame (fractional carry-over).
+    if (weather !== "CLEAR" && this.weatherParticles.length < PARTICLE_MAX) {
+      const rate =
+        weather === "RAIN"
+          ? PARTICLE_SPAWN_PER_MS_RAIN
+          : weather === "SNOW"
+            ? PARTICLE_SPAWN_PER_MS_SNOW
+            : PARTICLE_SPAWN_PER_MS_THUNDERSTORM;
+      this.weatherSpawnAcc += rate * dtMs;
+      const spawnCount = Math.floor(this.weatherSpawnAcc);
+      this.weatherSpawnAcc -= spawnCount;
+
+      const isSnow = weather === "SNOW";
+      for (let i = 0; i < spawnCount; i++) {
+        if (this.weatherParticles.length >= PARTICLE_MAX) break;
+        // Spawn just above the top of the viewport. For rain, also seed
+        // some particles from the right edge so the diagonal stream looks
+        // continuous (the wind blows them off the left side).
+        const fromRightEdge = !isSnow && Math.random() < 0.3;
+        const startX = fromRightEdge
+          ? W + Math.random() * 40
+          : Math.random() * (W + 60) - 30;
+        const startY = fromRightEdge
+          ? Math.random() * H * 0.5
+          : -10 - Math.random() * 20;
+        if (isSnow) {
+          this.weatherParticles.push({
+            kind: "snow",
+            x: startX,
+            y: startY,
+            vx: 0,
+            vy: SNOW_VY * (0.7 + Math.random() * 0.6),
+            baseX: startX,
+            phase: Math.random() * Math.PI * 2,
+          });
+        } else {
+          this.weatherParticles.push({
+            kind: "rain",
+            x: startX,
+            y: startY,
+            vx: RAIN_VX,
+            vy: RAIN_VY * (0.85 + Math.random() * 0.3),
+          });
+        }
+      }
+    } else if (weather === "CLEAR" && this.weatherParticles.length > 0) {
+      // Let existing particles fall through naturally so we don't snap-pop
+      // a screen full of rain when the weather clears mid-storm.
+    }
+
+    // 2. Advect + cull. We rebuild the array (not splice) — pure JS arrays
+    //    of plain objects are much faster to .filter() than to splice live.
+    if (this.weatherParticles.length > 0) {
+      const next: WeatherParticle[] = [];
+      for (const p of this.weatherParticles) {
+        if (p.kind === "snow") {
+          p.phase = (p.phase ?? 0) + dtMs * SNOW_WOBBLE_FREQ_RAD_PER_MS;
+          p.y += p.vy * dtMs;
+          p.x = (p.baseX ?? p.x) + Math.sin(p.phase) * SNOW_WOBBLE_AMP;
+        } else {
+          p.x += p.vx * dtMs;
+          p.y += p.vy * dtMs;
+        }
+        if (p.y > H + 8) continue;
+        if (p.x < -40 || p.x > W + 40) continue;
+        next.push(p);
+      }
+      this.weatherParticles = next;
+    }
+
+    // 3. Lightning — only during THUNDERSTORM. Two independent rolls per
+    //    frame: a cheap visual flash (always allowed — pure cosmetic), and
+    //    a much rarer ground strike that mutates NPC state. The strike is
+    //    GATED on timeScale > 0 so a paused world stays simulation-frozen
+    //    (the player should be able to inspect citizens during a storm
+    //    without the world traumatizing them under the pause).
+    if (weather === "THUNDERSTORM") {
+      const nowMs = this.state.time.totalRealMs;
+      if (
+        nowMs - this.lastLightningStrikeMs > LIGHTNING_COOLDOWN_MS &&
+        Math.random() < LIGHTNING_FLASH_CHANCE_PER_FRAME
+      ) {
+        this.lightningFlashUntilMs = nowMs + LIGHTNING_FLASH_MS;
+        this.lastLightningStrikeMs = nowMs;
+      }
+      if (
+        this.state.time.timeScale > 0 &&
+        Math.random() < LIGHTNING_STRIKE_CHANCE_PER_FRAME
+      ) {
+        this.tryLightningStrike();
+      }
+    }
+  }
+
+  /**
+   * Pick a random tile in the visible viewport and traumatize any non-king
+   * NPCs within Chebyshev distance 1. Skipped if no living non-king NPC is
+   * actually on screen — no point in rolling for an impact in empty space.
+   */
+  private tryLightningStrike(): void {
+    const grid = this.state.grid;
+    if (grid.rows <= 0 || grid.cols <= 0) return;
+    // Random tile anywhere on the map. The chronicle line is the player's
+    // feedback even if the strike is off-camera.
+    const col = Math.floor(Math.random() * grid.cols);
+    const row = Math.floor(Math.random() * grid.rows);
+    const victims = traumatizeAdjacent(this.state, col, row);
+    // Trigger the visual flash even when the strike is off-screen so the
+    // player gets the audio-style cue that something happened.
+    const nowMs = this.state.time.totalRealMs;
+    this.lightningFlashUntilMs = nowMs + LIGHTNING_FLASH_MS;
+    this.lastLightningStrikeMs = nowMs;
+    if (victims.length > 0) {
+      const names = victims.slice(0, 3).map((c) => c.name).join(", ");
+      const more = victims.length > 3 ? ` and ${victims.length - 3} others` : "";
+      addChronicle(
+        this.state,
+        `Lightning strikes near ${names}${more} — they flee in terror.`
+      );
+    }
+  }
+
+  /**
+   * Compose the seasonal color tint as a fillStyle string. Returns null
+   * when no tint should be applied (Summer = neutral baseline).
+   */
+  private seasonTintColor(season: Season): string | null {
+    switch (season) {
+      case "SPRING": return "rgba(140, 220, 140, 0.10)"; // pale leaf green
+      case "AUTUMN": return "rgba(220, 150, 80, 0.14)";  // amber wash
+      case "WINTER": return "rgba(170, 210, 255, 0.18)"; // pale icy blue
+      case "SUMMER":
+      default:       return null;
+    }
+  }
+
+  /**
+   * Phase 13: Render the screen-space weather VFX layer on top of all
+   * other overlays. Called from render() after the vignette so particles
+   * land above night tinting and lightning flashes blow out the whole
+   * screen briefly. Pure 2D canvas ops, no transforms.
+   */
+  private renderWeatherFx(): void {
+    const ctx = this.ctx;
+    const W = this.canvas.clientWidth;
+    const H = this.canvas.clientHeight;
+
+    // Particles
+    if (this.weatherParticles.length > 0) {
+      ctx.save();
+      // Rain pass — short angled lines, single batched stroke.
+      ctx.strokeStyle = "rgba(180, 210, 240, 0.55)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      let drewRain = false;
+      for (const p of this.weatherParticles) {
+        if (p.kind !== "rain") continue;
+        // Streak length proportional to velocity (px/ms × scale).
+        const len = 9;
+        const dx = p.vx * (len / RAIN_VY);
+        const dy = p.vy * (len / RAIN_VY);
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x - dx, p.y - dy);
+        drewRain = true;
+      }
+      if (drewRain) ctx.stroke();
+
+      // Snow pass — small soft circles.
+      ctx.fillStyle = "rgba(245, 250, 255, 0.85)";
+      for (const p of this.weatherParticles) {
+        if (p.kind !== "snow") continue;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // Lightning flash — full-screen white pulse with quick falloff.
+    const nowMs = this.state.time.totalRealMs;
+    if (nowMs < this.lightningFlashUntilMs) {
+      const t = (this.lightningFlashUntilMs - nowMs) / LIGHTNING_FLASH_MS;
+      const alpha = 0.55 * t * t; // ease-out quad
+      ctx.fillStyle = `rgba(255, 255, 240, ${alpha})`;
+      ctx.fillRect(0, 0, W, H);
+    }
   }
 
   /**
@@ -2323,6 +2664,9 @@ export class GameEngine {
     this.tickCitizenMovement(dt);
     this.tickCombat(dt);
     this.tickSparks(dt);
+    // Phase 13: weather particles + lightning roll. Runs every frame
+    // regardless of timeScale so a paused world still has visible rain.
+    this.tickClimate(dt);
 
     // Phase 12: Rumor Mill — gated to once per second to keep the O(N)
     // bucketed proximity scan from running 60×/s. Pause completely when
@@ -2505,12 +2849,26 @@ export class GameEngine {
       ctx.fillRect(0, 0, W, H);
     }
 
+    // Phase 13: Seasonal tint overlay. Sits between the night/winter
+    // overlays and the vignette so it colors the world but doesn't
+    // muddy the edge darkening. Summer is neutral (no overlay).
+    const seasonTint = this.seasonTintColor(this.state.currentSeason);
+    if (seasonTint) {
+      ctx.fillStyle = seasonTint;
+      ctx.fillRect(0, 0, W, H);
+    }
+
     // Pass 6: vignette overlay
     this.buildVignette();
     if (this.vignetteGradient) {
       ctx.fillStyle = this.vignetteGradient;
       ctx.fillRect(0, 0, W, H);
     }
+
+    // Phase 13: Weather VFX layer (rain/snow particles + lightning flash).
+    // Drawn LAST so particles sit above the vignette and a lightning flash
+    // blows out the entire screen including overlays.
+    this.renderWeatherFx();
   }
 
   /* -------------------------------------------------------------------- */

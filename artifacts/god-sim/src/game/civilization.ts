@@ -81,7 +81,9 @@ export function tickCivilizationMonth(
   civ: CivilizationState,
   buildings: Building[],
   /** Phase 5: when true, all wheat-producing buildings yield zero. */
-  winterActive: boolean = false
+  winterActive: boolean = false,
+  /** Phase 13: seasonal multiplier for crop output (1.5x Spring/Autumn, 0 Winter, 1 Summer). */
+  seasonCropMul: number = 1
 ): { taxes: number; housingCapacity: number } {
   const res = civ.resources;
   let totalHousing = 0;
@@ -110,10 +112,17 @@ export function tickCivilizationMonth(
       res[k] = Math.max(0, (res[k] ?? 0) - amount);
     }
 
-    // Add production (scaled by efficiency). Winter zeroes wheat output.
+    // Add production (scaled by efficiency). Phase 13: wheat is gated by
+    // both the manual Chronomancer Winter (kills crops outright) AND the
+    // seasonal cycle (1.5x in Spring/Autumn, 0 in natural Winter, 1x in
+    // Summer). The two effects compose multiplicatively — winterActive
+    // forces the multiplier to 0 even if seasonCropMul says otherwise.
     for (const [k, amount] of Object.entries(def.produces) as [Resource, number][]) {
-      const winterMul = winterActive && k === "wheat" ? 0 : 1;
-      res[k] = (res[k] ?? 0) + amount * efficiency * winterMul;
+      let mul = 1;
+      if (k === "wheat") {
+        mul = winterActive ? 0 : seasonCropMul;
+      }
+      res[k] = (res[k] ?? 0) + amount * efficiency * mul;
     }
 
     // Taxes (scaled by efficiency)

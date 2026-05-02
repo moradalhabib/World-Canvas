@@ -26,8 +26,11 @@ const SAVE_KEY = "god_sim_state";
  *  v9: + Phase 12 Societal Fabric Engine — adds lastName/mood/dissent fields
  *       on every citizen plus MENTAL_BREAK + CHATTING states. normalizeCitizens
  *       backfills the new fields; no other state mutations needed.
+ *  v10: + Phase 13 Dynamic Climate & Ecosystem Engine — adds currentSeason,
+ *        currentWeather, lastWeatherRollMonth on GameState. Migration backfills
+ *        from gameMonth (season is deterministic) and seeds CLEAR weather.
  */
-const CURRENT_VERSION = 9;
+const CURRENT_VERSION = 10;
 const INITIAL_CITIZEN_COUNT = 6;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;
@@ -106,6 +109,11 @@ export function createDefaultState(): GameState {
     dayNight: "day",
     lastDayNightFlipMonth: 1,
     winterActive: false,
+    // Phase 13: month 1 = January = WINTER. Weather seeded CLEAR; the engine
+    // re-rolls on the first day-phase transition.
+    currentSeason: monthToSeason(1),
+    currentWeather: "CLEAR",
+    lastWeatherRollMonth: 1,
   };
   // Phase 3B: anoint the founding King + Queen and write the first chronicle.
   anointInitialKing(state);
@@ -168,6 +176,18 @@ interface SerializedState {
   dayNight?: GameState["dayNight"];
   lastDayNightFlipMonth?: number;
   winterActive?: boolean;
+  /* Phase 13 */
+  currentSeason?: GameState["currentSeason"];
+  currentWeather?: GameState["currentWeather"];
+  lastWeatherRollMonth?: number;
+}
+
+/** Phase 13: deterministic season from game month (Mar-May Spring, etc.). */
+export function monthToSeason(month: number): GameState["currentSeason"] {
+  if (month >= 3 && month <= 5) return "SPRING";
+  if (month >= 6 && month <= 8) return "SUMMER";
+  if (month >= 9 && month <= 11) return "AUTUMN";
+  return "WINTER";
 }
 
 export function saveState(state: GameState): void {
@@ -192,6 +212,12 @@ export function saveState(state: GameState): void {
       dayNight: state.dayNight,
       lastDayNightFlipMonth: state.lastDayNightFlipMonth,
       winterActive: state.winterActive,
+      // Phase 13: persist climate state so reloads don't snap weather back
+      // to CLEAR mid-storm. Season is deterministic from gameMonth (fallback
+      // works) but currentWeather is non-deterministic and MUST be saved.
+      currentSeason: state.currentSeason,
+      currentWeather: state.currentWeather,
+      lastWeatherRollMonth: state.lastWeatherRollMonth,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(serialized));
   } catch (e) {
@@ -218,7 +244,8 @@ export function loadState(): GameState | null {
       s.version !== 5 &&
       s.version !== 6 &&
       s.version !== 7 &&
-      s.version !== 8
+      s.version !== 8 &&
+      s.version !== 9
     ) {
       return null;
     }
@@ -230,6 +257,7 @@ export function loadState(): GameState | null {
     let citizens: Citizen[];
     if (
       (s.version === CURRENT_VERSION ||
+        s.version === 9 ||
         s.version === 8 ||
         s.version === 7 ||
         s.version === 6 ||
@@ -267,6 +295,13 @@ export function loadState(): GameState | null {
       lastDayNightFlipMonth:
         s.lastDayNightFlipMonth ?? s.time.gameYear * 12 + s.time.gameMonth,
       winterActive: s.winterActive ?? false,
+      // Phase 13 backfill — season is deterministic from gameMonth, so older
+      // saves can simply recompute it. Weather defaults to CLEAR; the engine
+      // will re-roll on the next day-phase transition.
+      currentSeason: s.currentSeason ?? monthToSeason(s.time.gameMonth),
+      currentWeather: s.currentWeather ?? "CLEAR",
+      lastWeatherRollMonth:
+        s.lastWeatherRollMonth ?? s.time.gameYear * 12 + s.time.gameMonth,
     };
 
     // v3 → v4: no monarch existed. Anoint the existing population.

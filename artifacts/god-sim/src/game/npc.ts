@@ -77,6 +77,9 @@ const MOOD_DRAIN_HUNGRY = 10;             // mood lost per month when hunger > 8
 const MOOD_DRAIN_UNSAFE = 10;             // mood lost per month when safety < 20
 const MOOD_BUFF_MASTERY = 5;              // mood gained per month at skill level 10+
 const MOOD_REGEN_PER_MONTH = 2;           // passive mood regen when no stressor active
+// Phase 13: climate-driven mood drain.
+const MOOD_DRAIN_WINTER = 5;              // mood lost per month during natural Winter (doubled if homeless)
+const MOOD_DRAIN_WET = 2;                 // mood lost per month when outdoors during rain/snow/thunderstorm
 const MENTAL_BREAK_THIEF_STEAL = 100;     // gold a Greedy thief loots from treasury
 const MENTAL_BREAK_RECLUSE_MONTHS = 3;    // months a Coward hides indoors before recovery
 const DOOMSAYER_AURA_RADIUS = 3;          // tiles — drains -1 faith from each citizen in range
@@ -441,9 +444,19 @@ function tickEconomyAndFaction(
   const masteryMul = 1 + lvl * 0.1;
   const traitYieldMul = citizen.trait === "Diligent" ? DILIGENT_YIELD_MUL : 1;
   if (prof === "Farmer") {
+    // Phase 13: per-citizen farmer yield is gated by the same seasonal cycle
+    // that drives civic wheat production. Spring/Autumn = 1.5x harvest;
+    // Summer = 1x; Winter = 0 (frozen ground). The Chronomancer Winter god
+    // power also forces yield to 0 regardless of natural season.
+    const season = state.currentSeason;
+    const seasonMul = state.winterActive || season === "WINTER"
+      ? 0
+      : season === "SPRING" || season === "AUTUMN"
+        ? 1.5
+        : 1;
     citizen.goods =
       (citizen.goods ?? 0) +
-      GOODS_PER_MONTH_FARMER * masteryMul * traitYieldMul;
+      GOODS_PER_MONTH_FARMER * masteryMul * traitYieldMul * seasonMul;
   } else if (prof === "Miner") {
     citizen.goods =
       (citizen.goods ?? 0) +
@@ -677,6 +690,31 @@ export function tickCitizenMonth(
   if (citizen.safety < 20) { mood -= MOOD_DRAIN_UNSAFE; stressed = true; }
   if ((citizen.skills?.level ?? 0) >= 10) mood += MOOD_BUFF_MASTERY;
   if (!stressed) mood += MOOD_REGEN_PER_MONTH;
+
+  // ---- Phase 13: Climate-driven mood drain ------------------------------
+  // Winter is harsh (-5/month). The homeless catch a double penalty because
+  // they have no warm house to retreat into. Rain/snow adds a "wet &
+  // miserable" -2 drain whenever the citizen is outdoors at the moment of
+  // the monthly tick (SLEEPING citizens are tucked safely into their home).
+  if (state) {
+    const naturalWinter = state.currentSeason === "WINTER";
+    if (naturalWinter || state.winterActive) {
+      const homeless = !citizen.homeBuildingId;
+      mood -= MOOD_DRAIN_WINTER * (homeless ? 2 : 1);
+      stressed = true;
+    }
+    // Anyone reaching this branch already passed the SLEEPING early-return
+    // up top, so they're definitionally outdoors when the monthly tick fires.
+    const wet =
+      state.currentWeather === "RAIN" ||
+      state.currentWeather === "SNOW" ||
+      state.currentWeather === "THUNDERSTORM";
+    if (wet) {
+      mood -= MOOD_DRAIN_WET;
+      stressed = true;
+    }
+  }
+
   citizen.mood = Math.max(0, Math.min(100, mood));
 
   if (citizen.mood === 0 && state) {
@@ -827,8 +865,19 @@ export function updateCitizenMovement(
 
   // Phase 6: Elders shuffle along at 70% speed.
   const year = state?.time.gameYear ?? 1;
-  const speedMul =
+  let speedMul =
     getLifeStage(citizen, year) === "elder" ? ELDER_SPEED_MULTIPLIER : 1;
+  // Phase 13: rain/snow/thunderstorm slows outdoor movement by 10%. SLEEPING
+  // citizens never tick into this branch (tickCitizenMonth early-returns)
+  // so we don't need an indoor check here — anyone walking IS outdoors.
+  if (
+    state &&
+    (state.currentWeather === "RAIN" ||
+      state.currentWeather === "SNOW" ||
+      state.currentWeather === "THUNDERSTORM")
+  ) {
+    speedMul *= 0.9;
+  }
   const tilesPerMs = (TILES_PER_SECOND_AT_1X / 1000) * timeScale * speedMul;
   citizen.progress += dtMs * tilesPerMs;
 
@@ -1215,6 +1264,77 @@ export function processNightSleep(state: GameState, grid: Grid, buildings: Build
       c.progress = 0;
     }
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Phase 13: Lightning trauma — adjacent NPCs to a strike are scared into    */
+/*  FLEEING with mood crashed to 0. Returns the citizens that were affected   */
+/*  so the caller can chronicle the event.                                    */
+/* -------------------------------------------------------------------------- */
+
+export function traumatizeAdjacent(
+  state: GameState,
+  strikeCol: number,
+  strikeRow: number
+): Citizen[] {
+  const victims: Citizen[] = [];
+  for (const c of state.citizens) {
+    if (c.state === "DEAD" || c.state === "SLEEPING") continue;
+    if (c.isKing) continue; // the king is shielded by his palace's lightning rod
+    const dx = Math.abs(c.col - strikeCol);
+    const dy = Math.abs(c.row - strikeRow);
+    if (dx > 1 || dy > 1) continue;
+    c.mood = 0;
+    c.state = "FLEEING";
+    c.progress = 0;
+    c.targetBuildingId = undefined;
+    // Clear any stale Phase-12 transient fields so the FLEEING state is clean.
+    c.breakKind = undefined;
+    c.breakUntilMonth = undefined;
+    c.chatUntilMs = undefined;
+    c.chatPartnerId = undefined;
+
+    // Compute an actual flee path: pick a goal tile a few steps in the
+    // direction OPPOSITE the strike, clamped to the grid, then progressively
+    // shorten the radius until findPath returns a walkable destination.
+    // Without a real path, the citizen would just sit in FLEEING.
+    const grid = state.grid;
+    const fleeVecCol = c.col - strikeCol; // points away from strike
+    const fleeVecRow = c.row - strikeRow;
+    // If the citizen is exactly on the strike tile, jitter randomly so we
+    // don't divide by zero / pick a self-targeted path.
+    const vc = fleeVecCol === 0 && fleeVecRow === 0
+      ? (Math.random() < 0.5 ? -1 : 1)
+      : fleeVecCol;
+    const vr = fleeVecCol === 0 && fleeVecRow === 0
+      ? (Math.random() < 0.5 ? -1 : 1)
+      : fleeVecRow;
+    const mag = Math.max(1, Math.abs(vc) + Math.abs(vr));
+    let assigned = false;
+    for (const radius of [6, 4, 3, 2]) {
+      const goalCol = Math.max(0, Math.min(grid.cols - 1,
+        Math.round(c.col + (vc / mag) * radius)));
+      const goalRow = Math.max(0, Math.min(grid.rows - 1,
+        Math.round(c.row + (vr / mag) * radius)));
+      if (!isWalkable(grid, goalRow, goalCol)) continue;
+      const path = findPath(grid, c.row, c.col, goalRow, goalCol);
+      if (path && path.length > 0) {
+        c.path = path;
+        c.pathIndex = 0;
+        c.targetTile = { row: goalRow, col: goalCol };
+        assigned = true;
+        break;
+      }
+    }
+    if (!assigned) {
+      // Fallback: clear path so existing FLEEING handler can re-plan next tick.
+      c.path = [];
+      c.pathIndex = 0;
+      c.targetTile = undefined;
+    }
+    victims.push(c);
+  }
+  return victims;
 }
 
 /** Called at the start of a Day month. Wake everyone who was sleeping. */

@@ -95,6 +95,9 @@ export default function App() {
   const [chronicle, setChronicle] = useState<ChronicleEntry[]>([]);
   const [nobleDissent, setNobleDissent] = useState<GameState["nobleDissent"]>("LOW");
   const [dayNight, setDayNight] = useState<GameState["dayNight"]>("day");
+  // Phase 13: Climate Engine — surfaced in the top HUD as two small pills.
+  const [season, setSeason] = useState<GameState["currentSeason"]>("WINTER");
+  const [weather, setWeather] = useState<GameState["currentWeather"]>("CLEAR");
   // Phase 4: Inner Monologue overlay state.
   const [monologue, setMonologue] = useState<{
     citizen: Citizen;
@@ -202,6 +205,8 @@ export default function App() {
     setChronicle(state.chronicle.slice(-6).reverse());
     setNobleDissent(state.nobleDissent);
     setDayNight(state.dayNight);
+    setSeason(state.currentSeason);
+    setWeather(state.currentWeather);
   }, []);
 
   useEffect(() => {
@@ -219,6 +224,8 @@ export default function App() {
     setChronicle(s.chronicle.slice(-6).reverse());
     setNobleDissent(s.nobleDissent);
     setDayNight(s.dayNight);
+    setSeason(s.currentSeason);
+    setWeather(s.currentWeather);
     setWinterOn(s.winterActive);
     return () => {
       engine.destroy();
@@ -272,6 +279,58 @@ export default function App() {
             }}
           >
             {dayNight === "night" ? "☾ NIGHT" : "☀ DAY"}
+          </span>
+          {/* Phase 13: Season pill — derived from gameMonth on the engine. */}
+          <span
+            className="hud-season"
+            title={`Season: ${season.charAt(0) + season.slice(1).toLowerCase()}`}
+            style={{
+              marginLeft: 8,
+              padding: "2px 8px",
+              borderRadius: 10,
+              fontSize: 11,
+              background:
+                season === "SPRING" ? "#dcfce7" :
+                season === "SUMMER" ? "#fef9c3" :
+                season === "AUTUMN" ? "#fed7aa" :
+                "#e0f2fe",
+              color:
+                season === "SPRING" ? "#166534" :
+                season === "SUMMER" ? "#854d0e" :
+                season === "AUTUMN" ? "#9a3412" :
+                "#075985",
+            }}
+          >
+            {season === "SPRING" ? "🌱 SPRING" :
+             season === "SUMMER" ? "☼ SUMMER" :
+             season === "AUTUMN" ? "🍂 AUTUMN" :
+             "❄ WINTER"}
+          </span>
+          {/* Phase 13: Weather pill — re-rolled at every dawn. */}
+          <span
+            className="hud-weather"
+            title={`Weather: ${weather.charAt(0) + weather.slice(1).toLowerCase()}`}
+            style={{
+              marginLeft: 8,
+              padding: "2px 8px",
+              borderRadius: 10,
+              fontSize: 11,
+              background:
+                weather === "CLEAR" ? "#fef3c7" :
+                weather === "RAIN" ? "#bae6fd" :
+                weather === "SNOW" ? "#f1f5f9" :
+                "#312e81",
+              color:
+                weather === "CLEAR" ? "#92400e" :
+                weather === "RAIN" ? "#075985" :
+                weather === "SNOW" ? "#334155" :
+                "#e0e7ff",
+            }}
+          >
+            {weather === "CLEAR" ? "☀ CLEAR" :
+             weather === "RAIN" ? "☂ RAIN" :
+             weather === "SNOW" ? "❄ SNOW" :
+             "⚡ STORM"}
           </span>
           <span
             className="hud-fps"
