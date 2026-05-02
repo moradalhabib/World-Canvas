@@ -1,0 +1,38 @@
+Phase 4: The Societal Engine (Economy, Factions & Monologue)
+Acknowledge this prompt. We are now integrating an advanced Societal Engine into the existing NPC Utility Brain. Implement the following interconnected systems using a highly optimized, data-driven master registry array for all active citizens.
+
+1. Professions & The Economy (Vanity Activation):
+
+Assign each adult NPC a profession flag: 'Farmer', 'Miner', or 'Guard'.
+
+Implement an economic tick: Farmers and Miners generate 'Goods'. When they return to a building, they convert Goods into Gold, which increases their Vanity stat.
+
+NPCs with high Vanity automatically upgrade their visual sprite to the 'Middle-Class' or 'High-Class' tier.
+
+2. Factions & Civil War Engine (Social Activation):
+
+Use the Social stat as a 'Loyalty' matrix.
+
+If globalDissent is triggered (e.g., Dowager Queen takes the throne), check NPC wealth. High-Vanity NPCs join the 'Noble Rebellion' faction. Low-Vanity Guards remain in the 'Royalist' faction.
+
+Implement a combat state: If a Rebel and a Royalist are within a 2-tile radius during high dissent, state changes to COMBAT. They stop moving, and a brief particle effect (sparks) plays before one enters the DEAD state.
+
+3. The Inner Monologue UI (Touch/Click Event):
+
+Add an event listener to the Canvas for user taps/clicks. Determine if the tap intersects with an NPC's x/y coordinates.
+
+If an NPC is tapped, pause the game engine (timeScale = 0).
+
+Render a minimalist, punchy HTML/CSS tooltip box over the canvas near the NPC.
+
+Generate a dynamic string based on their highest driving stat. Examples:
+
+If Hunger > 80: "The granaries are empty. We will not survive the winter."
+
+If faction is Rebel: "The true bloodline is broken. We march at dawn."
+
+If Vanity > 80: "My estates grow larger by the day."
+
+Tapping anywhere else closes the tooltip and resumes the game.
+
+Instruction: Confirm understanding. Provide the updated JavaScript logic, paying special attention to the canvas touch intersection math to ensure the hitboxes on mobile are accurate.
