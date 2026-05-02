@@ -1,7 +1,15 @@
-import type { GameState, Tile, TileType } from "./types";
+import type {
+  Building,
+  CivilizationState,
+  GameState,
+  Tile,
+  TileType,
+} from "./types";
+import { createDefaultCivilization } from "./civilization";
 
 const SAVE_KEY = "god_sim_state";
-const CURRENT_VERSION = 1;
+/** v1: terrain only. v2: + buildings + civilization. */
+const CURRENT_VERSION = 2;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;
 const TILE_SIZE = 64;
@@ -50,6 +58,13 @@ function generateTerrain(cols: number, rows: number): Tile[][] {
 }
 
 export function createDefaultState(): GameState {
+  const grid = {
+    cols: GRID_COLS,
+    rows: GRID_ROWS,
+    tileSize: TILE_SIZE,
+    tiles: generateTerrain(GRID_COLS, GRID_ROWS),
+  };
+  const civilization = createDefaultCivilization(grid);
   return {
     version: CURRENT_VERSION,
     camera: { x: 0, y: 0, zoom: 1 },
@@ -60,12 +75,9 @@ export function createDefaultState(): GameState {
       lastSavedTimestamp: Date.now(),
       totalRealMs: 0,
     },
-    grid: {
-      cols: GRID_COLS,
-      rows: GRID_ROWS,
-      tileSize: TILE_SIZE,
-      tiles: generateTerrain(GRID_COLS, GRID_ROWS),
-    },
+    grid,
+    buildings: [],
+    civilization,
   };
 }
 
@@ -116,6 +128,8 @@ interface SerializedState {
   time: GameState["time"];
   gridMeta: { cols: number; rows: number; tileSize: number };
   tilesData: string;
+  buildings: Building[];
+  civilization: CivilizationState;
 }
 
 export function saveState(state: GameState): void {
@@ -131,6 +145,8 @@ export function saveState(state: GameState): void {
         tileSize: state.grid.tileSize,
       },
       tilesData,
+      buildings: state.buildings,
+      civilization: state.civilization,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(serialized));
   } catch (e) {
@@ -150,6 +166,8 @@ export function loadState(): GameState | null {
       camera: s.camera,
       time: s.time,
       grid: { ...s.gridMeta, tiles },
+      buildings: s.buildings ?? [],
+      civilization: s.civilization,
     };
   } catch (e) {
     console.warn("Failed to load state:", e);
@@ -172,4 +190,12 @@ export function applyOfflineProgression(state: GameState): void {
   }
   state.time.lastSavedTimestamp = now;
   state.time.totalRealMs += elapsedRealMs;
+}
+
+export function clearSave(): void {
+  try {
+    localStorage.removeItem(SAVE_KEY);
+  } catch (e) {
+    console.warn("Failed to clear save:", e);
+  }
 }

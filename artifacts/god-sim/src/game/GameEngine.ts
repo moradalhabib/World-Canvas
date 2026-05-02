@@ -5,13 +5,17 @@ import {
   SPECKLE_DENSITY,
   getTransitionColor,
 } from "./types";
-import type { GameState, TileType } from "./types";
+import type { Building, GameState, TileType } from "./types";
 import {
   createDefaultState,
   saveState,
   loadState,
   applyOfflineProgression,
 } from "./storage";
+import { getBuildingDef } from "./buildings";
+import { tickCivilizationMonth } from "./civilization";
+import { DesirabilityMap } from "./desirability";
+import { planAndBuild, tryUpgradeHouses } from "./buildAI";
 
 const MAX_ZOOM = 4.0;
 const SAVE_INTERVAL_MS = 10_000;
@@ -51,6 +55,13 @@ export class GameEngine {
   /** Pre-baked edge fade strips, keyed by `${color}|${dir}` where dir is t/b/l/r. */
   private transitionStrips = new Map<string, HTMLCanvasElement>();
 
+  /** Hidden land-value map driving social hierarchy. */
+  private desirability!: DesirabilityMap;
+  /** Months between full desirability recomputes (it's also marked dirty on builds). */
+  private monthsSinceDesirRecompute = 0;
+  /** Pending offline simulation catch-up to run after init. */
+  private pendingOfflineMonths = 0;
+
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
@@ -58,8 +69,12 @@ export class GameEngine {
 
     const saved = loadState();
     if (saved) {
+      const elapsedMs = Date.now() - saved.time.lastSavedTimestamp;
+      const offlineMonths = Math.max(0, Math.floor(elapsedMs / 60_000));
       applyOfflineProgression(saved);
       this.state = saved;
+      // Defer offline simulation catch-up — desirability map isn't built yet.
+      this.pendingOfflineMonths = Math.min(offlineMonths, 60);
     } else {
       this.state = createDefaultState();
     }
@@ -71,9 +86,66 @@ export class GameEngine {
     this.buildBiomePatterns();
     this.buildWaterHighlight();
 
+    // Initialize desirability map and seed with terrain + any saved buildings.
+    this.desirability = new DesirabilityMap(this.state.grid.rows, this.state.grid.cols);
+    this.desirability.recompute(this.state.grid, this.state.buildings);
+
+    // Run offline simulation catch-up now that desirability is ready.
+    if (this.pendingOfflineMonths > 0) {
+      for (let i = 0; i < this.pendingOfflineMonths; i++) this.simulateMonth();
+      this.pendingOfflineMonths = 0;
+    }
+
+    // Center camera on the civilization spawn point on fresh start so the
+    // user immediately sees where buildings will appear. (Don't override
+    // a meaningful saved camera — only do this when camera is at default.)
+    if (this.state.camera.x === 0 && this.state.camera.y === 0 && this.state.camera.zoom === 1) {
+      const grid = this.state.grid;
+      const founded = this.state.civilization.founded;
+      const focusX = founded.col * grid.tileSize + grid.tileSize / 2;
+      const focusY = founded.row * grid.tileSize + grid.tileSize / 2;
+      // Pick a comfortable mid-range zoom that shows ~20 tiles across
+      const targetZoom = Math.min(MAX_ZOOM, this.viewW / (20 * grid.tileSize));
+      this.state.camera.zoom = Math.max(this.minZoom, targetZoom);
+      this.state.camera.x = focusX - this.viewW / (2 * this.state.camera.zoom);
+      this.state.camera.y = focusY - this.viewH / (2 * this.state.camera.zoom);
+      this.clampCamera();
+    }
+
     this.bindTouchEvents();
     this.bindMouseEvents();
     this.start();
+  }
+
+  /**
+   * Run one month of civilization simulation.
+   * Sequence:
+   *   1. Recompute desirability if marked dirty (or every N months).
+   *   2. Tick civilization (production, taxes, needs decay).
+   *   3. Try to upgrade existing houses based on land value.
+   *   4. Run autonomous build AI to place at most one new building.
+   */
+  private simulateMonth() {
+    this.monthsSinceDesirRecompute++;
+    if (this.desirability.isDirty() || this.monthsSinceDesirRecompute >= 6) {
+      this.desirability.recompute(this.state.grid, this.state.buildings);
+      this.monthsSinceDesirRecompute = 0;
+    }
+
+    tickCivilizationMonth(this.state.civilization, this.state.buildings);
+
+    tryUpgradeHouses(this.state.buildings, this.state.civilization, this.desirability);
+
+    const newBuilding = planAndBuild(
+      this.state.grid,
+      this.state.buildings,
+      this.state.civilization,
+      this.desirability,
+      this.state.time.gameMonth + (this.state.time.gameYear - 1) * 12
+    );
+    if (newBuilding) {
+      this.state.buildings.push(newBuilding);
+    }
   }
 
   private buildBiomePatterns() {
@@ -182,6 +254,118 @@ export class GameEngine {
     p.fillStyle = grad;
     p.fillRect(0, 0, ts, ts);
     this.waterHighlight = off;
+  }
+
+  /**
+   * Draw all buildings within the given tile bounds. Visual style varies per
+   * category & tier:
+   *   - Residential: roofed cottage shape; tier controls colors + size
+   *   - Production: square workshop with darker roof + glyph
+   *   - Service: circular icon
+   * High-tier homes get a small golden "wealth" indicator.
+   */
+  private renderBuildings(
+    startRow: number,
+    endRow: number,
+    startCol: number,
+    endCol: number
+  ) {
+    const ctx = this.ctx;
+    const ts = this.state.grid.tileSize;
+    const cam = this.state.camera;
+    if (this.state.buildings.length === 0) return;
+
+    for (const b of this.state.buildings) {
+      if (b.row < startRow || b.row > endRow) continue;
+      if (b.col < startCol || b.col > endCol) continue;
+      const def = getBuildingDef(b.typeId);
+      const x = b.col * ts;
+      const y = b.row * ts;
+      this.drawBuilding(b, def, x, y, ts);
+    }
+
+    // Show building glyphs only when zoomed in enough to read them
+    if (cam.zoom > 0.7) {
+      ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+      ctx.font = `bold ${Math.round(ts * 0.32)}px -apple-system, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (const b of this.state.buildings) {
+        if (b.row < startRow || b.row > endRow) continue;
+        if (b.col < startCol || b.col > endCol) continue;
+        const def = getBuildingDef(b.typeId);
+        ctx.fillText(def.glyph, b.col * ts + ts * 0.5, b.row * ts + ts * 0.62);
+      }
+    }
+  }
+
+  private drawBuilding(
+    b: Building,
+    def: ReturnType<typeof getBuildingDef>,
+    x: number,
+    y: number,
+    ts: number
+  ) {
+    const ctx = this.ctx;
+    // Inset so building doesn't touch tile edges
+    const pad = ts * 0.15;
+    const w = ts - pad * 2;
+    const h = ts - pad * 2;
+    const px = x + pad;
+    const py = y + pad;
+
+    if (def.category === "service") {
+      // Circular well/service icon
+      ctx.fillStyle = def.fillColor;
+      ctx.strokeStyle = def.roofColor;
+      ctx.lineWidth = ts * 0.06;
+      ctx.beginPath();
+      ctx.arc(x + ts * 0.5, y + ts * 0.5, w * 0.42, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      return;
+    }
+
+    // House / production: walls + roof
+    const wallH = h * 0.6;
+    const roofH = h * 0.45;
+
+    // Drop shadow under building
+    ctx.fillStyle = "rgba(0, 0, 0, 0.32)";
+    ctx.beginPath();
+    ctx.ellipse(x + ts * 0.5, y + ts * 0.92, w * 0.42, h * 0.08, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Walls
+    ctx.fillStyle = def.fillColor;
+    ctx.fillRect(px, py + roofH * 0.55, w, wallH);
+    // Subtle wall outline
+    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px, py + roofH * 0.55, w, wallH);
+
+    // Roof (triangle)
+    ctx.fillStyle = def.roofColor;
+    ctx.beginPath();
+    ctx.moveTo(px - w * 0.06, py + roofH * 0.6);
+    ctx.lineTo(px + w * 0.5, py);
+    ctx.lineTo(px + w + w * 0.06, py + roofH * 0.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Tier indicator: gold dot for high-class manors
+    if (b.typeId === "house_high") {
+      ctx.fillStyle = "#ffd84a";
+      ctx.shadowColor = "rgba(255, 200, 50, 0.8)";
+      ctx.shadowBlur = ts * 0.12;
+      ctx.beginPath();
+      ctx.arc(x + ts * 0.5, py - h * 0.08, ts * 0.07, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
   }
 
   private buildVignette() {
@@ -416,6 +600,10 @@ export class GameEngine {
         this.state.time.gameMonth -= 12;
         this.state.time.gameYear++;
       }
+      // Run civilization simulation for each elapsed month (capped to avoid
+      // huge stalls if user tabbed away — offline catch-up handles long gaps).
+      const sims = Math.min(wholeMonths, 6);
+      for (let i = 0; i < sims; i++) this.simulateMonth();
       this.callbacks.onTimeUpdate(this.state);
     }
   }
@@ -531,9 +719,12 @@ export class GameEngine {
       }
     }
 
+    // Pass 5: buildings (autonomous AI placements)
+    this.renderBuildings(startRow, endRow, startCol, endCol);
+
     ctx.restore();
 
-    // Pass 5: vignette overlay
+    // Pass 6: vignette overlay
     this.buildVignette();
     if (this.vignetteGradient) {
       ctx.fillStyle = this.vignetteGradient;

@@ -38,6 +38,8 @@ export interface GameState {
   camera: Camera;
   time: TimeState;
   grid: Grid;
+  buildings: Building[];
+  civilization: CivilizationState;
 }
 
 export const TILE_COLORS: Record<TileType, string> = {
@@ -96,4 +98,112 @@ export function getTransitionColor(a: TileType, b: TileType): string | null {
     TRANSITION_COLORS[`${b}|${a}`] ??
     null
   );
+}
+
+/* ========================================================================== */
+/*  Phase 2: Resources, Buildings, Civilization, Utility AI                   */
+/* ========================================================================== */
+
+export type Resource = "wheat" | "bread" | "wood" | "stone" | "gold";
+
+export const ALL_RESOURCES: Resource[] = ["wheat", "bread", "wood", "stone", "gold"];
+
+export type SocialTier = "free" | "middle" | "high";
+
+export type BuildingId =
+  | "house_free"
+  | "house_middle"
+  | "house_high"
+  | "farm"
+  | "bakery"
+  | "lumber_camp"
+  | "mine"
+  | "well";
+
+export type BuildingCategory = "residential" | "production" | "service";
+
+export interface BuildingDef {
+  id: BuildingId;
+  name: string;
+  category: BuildingCategory;
+  tier: SocialTier;
+  /** Tile types this building can be placed on. */
+  validOn: TileType[];
+  /** Requires at least one neighbor of these tile types (within 1 tile). */
+  requiredAdjacent?: TileType[];
+  /** Build cost paid from civilization treasury/resources. */
+  buildCost: Partial<Record<Resource, number>>;
+  /** Per-month consumption (must be available or production halves). */
+  consumes: Partial<Record<Resource, number>>;
+  /** Per-month production (when consumption is met). */
+  produces: Partial<Record<Resource, number>>;
+  /** Gold tax generated per month (when staffed/served). */
+  taxes: number;
+  /** People housed (residential only). */
+  housing: number;
+  /** Worker slots required. */
+  workers: number;
+  /** Desirability contribution (per tile within radius). */
+  desirability: number;
+  desirabilityRadius: number;
+  /** Visuals. */
+  fillColor: string;
+  roofColor: string;
+  glyph: string;
+  /** What needs this building satisfies, used by utility AI. */
+  satisfies: Partial<Record<NeedType, number>>;
+}
+
+export interface Building {
+  id: string;
+  typeId: BuildingId;
+  row: number;
+  col: number;
+  builtMonth: number;
+  /** Cached desirability score at last evaluation, for HUD/debug. */
+  lastDesirability: number;
+}
+
+/* ── Utility AI: needs ── */
+
+export type NeedType = "hunger" | "safety" | "social" | "vanity" | "faith";
+
+export const ALL_NEEDS: NeedType[] = ["hunger", "safety", "social", "vanity", "faith"];
+
+export interface NeedState {
+  /** 0..100, higher = more urgent / more unmet. */
+  value: number;
+  /** Priority multiplier when scoring actions. */
+  weight: number;
+  /** How fast this need rises per month if unmet. */
+  decay: number;
+}
+
+export const NEED_COLORS: Record<NeedType, string> = {
+  hunger: "#e8a23a",
+  safety: "#5fb3d6",
+  social: "#d96bd9",
+  vanity: "#d4af37",
+  faith: "#a78bd9",
+};
+
+export const NEED_LABELS: Record<NeedType, string> = {
+  hunger: "Hunger",
+  safety: "Safety",
+  social: "Social",
+  vanity: "Vanity",
+  faith: "Faith",
+};
+
+/* ── Civilization state ── */
+
+export interface CivilizationState {
+  population: number;
+  treasury: number;
+  resources: Record<Resource, number>;
+  needs: Record<NeedType, NeedState>;
+  /** Town center (where the first settlement spawned). */
+  founded: { row: number; col: number };
+  /** Monthly cumulative tax income for HUD trend (last 12 months). */
+  monthlyTaxHistory: number[];
 }
