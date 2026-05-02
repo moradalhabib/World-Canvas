@@ -1,0 +1,36 @@
+Phase 8: The Grand Campaign Engine (Frontier, Progression & Heresy)
+Acknowledge this prompt. We are implementing the final macro-gameplay loops. Append this logic seamlessly into the existing Societal, God Power, and Lifecycle engines without breaking any core pathfinding or rendering mechanics.
+
+1. The Ages of Man (Global Progression):
+
+Track globalWealth (sum of all NPC Gold + Treasury).
+
+Define civLevel: Starts at 1 ('Wood Age'). If globalWealth > 50,000, upgrade to 2 ('Stone Age').
+
+Visual Upgrade: When civLevel == 2, update the building render logic. Change standard brown rectangles to grey/slate with sharp borders to represent stone masonry. High-class buildings get marble (white/gold) accents.
+
+2. The Foreign Frontier (Event Spawner):
+
+Create a global event timer that ticks every 5 game years.
+
+Caravan Event (50% chance): Spawn 2 'Merchant' NPCs at the map edge. They pathfind to the Treasury, deposit 5,000 Gold, and leave.
+
+Invasion Event (50% chance): Spawn 3 'Invader' NPCs (red sprites, hostile faction) at the edge. They pathfind to the King/Dowager and initiate COMBAT with any Guards or Royalists in their path.
+
+3. Heresy & False Idols (Advanced Faith):
+
+If an NPC's Faith drops to exactly 0, their state becomes HERETIC (visual: dark grey aura).
+
+The Idol: A Heretic will pathfind to an empty tile and spawn a 'False Idol' building (visual: a dark obelisk).
+
+The Aura Effect: The False Idol emits a 5-tile radius. Any loyal NPC walking through this radius loses 10 Faith per tick.
+
+Resolution: The Idol must be destroyed by the player (using the 'Smite' God Power) or by Royal Guards. If left unchecked, the entire town will turn Heretic and trigger an instant, massive Civil War against the Crown.
+
+4. UI Integration:
+
+Add a civLevel indicator to the top HUD.
+
+Add an "Event Alert" temporary banner that drops down from the top of the screen when a Caravan, Invasion, or Idol appears.
+
+Instruction: Confirm understanding. Provide the updated JavaScript logic to execute this Dynamic Equilibrium state. Optimize the radius-checking math for the False Idol to ensure the game loop remains at 60 FPS on mobile devices.

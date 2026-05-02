@@ -20,8 +20,32 @@ import {
   getCitizenVisualPos,
   tickCitizenMonth,
   updateCitizenMovement,
+  processNightSleep,
+  processDayWake,
 } from "./npc";
-import { tickYear as tickRoyalYear } from "./royalty";
+import { tickYear as tickRoyalYear, getLifeStage, notifyDeath, addChronicle } from "./royalty";
+import type { Citizen } from "./types";
+
+/* Phase 4: Combat tunables */
+const COMBAT_RADIUS_TILES = 2;
+const COMBAT_DURATION_MS = 900;
+const SPARK_LIFE_MS = 450;
+const SPARKS_PER_FRAME = 1;
+
+interface Spark {
+  x: number;        // world px
+  y: number;        // world px
+  vx: number;
+  vy: number;
+  life: number;     // ms remaining
+  maxLife: number;
+}
+
+export interface CitizenTapInfo {
+  citizen: Citizen;
+  screenX: number;
+  screenY: number;
+}
 
 const MAX_ZOOM = 4.0;
 const SAVE_INTERVAL_MS = 10_000;
@@ -29,6 +53,8 @@ const MONTHS_PER_REAL_MS_AT_1X = 1 / 60_000;
 
 export interface GameCallbacks {
   onTimeUpdate: (state: GameState) => void;
+  /** Phase 4: Inner Monologue — fired when the user taps an NPC. */
+  onCitizenTap?: (info: CitizenTapInfo) => void;
 }
 
 export class GameEngine {
@@ -72,6 +98,17 @@ export class GameEngine {
   private monthsSinceDesirRecompute = 0;
   /** Pending offline simulation catch-up to run after init. */
   private pendingOfflineMonths = 0;
+
+  /* Phase 4: Combat sparks (world-space particles) */
+  private sparks: Spark[] = [];
+
+  /* Phase 4: Tap detection state — distinguish drag from click/tap */
+  private pointerDownX = 0;
+  private pointerDownY = 0;
+  private pointerDownTime = 0;
+  private pointerMaxMove = 0;
+  private readonly TAP_MOVE_SLOP = 8;   // px
+  private readonly TAP_TIME_MAX = 350;  // ms
 
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.canvas = canvas;
@@ -731,6 +768,10 @@ export class GameEngine {
     this.mouseDown = true;
     this.mouseLastX = e.clientX;
     this.mouseLastY = e.clientY;
+    this.pointerDownX = e.clientX;
+    this.pointerDownY = e.clientY;
+    this.pointerDownTime = performance.now();
+    this.pointerMaxMove = 0;
     this.panVelX = 0;
     this.panVelY = 0;
   };
@@ -739,6 +780,10 @@ export class GameEngine {
     if (!this.mouseDown) return;
     const dx = e.clientX - this.mouseLastX;
     const dy = e.clientY - this.mouseLastY;
+    this.pointerMaxMove = Math.max(
+      this.pointerMaxMove,
+      Math.hypot(e.clientX - this.pointerDownX, e.clientY - this.pointerDownY)
+    );
     this.panVelX = -dx / this.state.camera.zoom;
     this.panVelY = -dy / this.state.camera.zoom;
     this.state.camera.x += this.panVelX;
@@ -748,7 +793,15 @@ export class GameEngine {
     this.mouseLastY = e.clientY;
   };
 
-  private onMouseUp = () => { this.mouseDown = false; };
+  private onMouseUp = (e: MouseEvent) => {
+    if (this.mouseDown) {
+      const dt = performance.now() - this.pointerDownTime;
+      if (this.pointerMaxMove < this.TAP_MOVE_SLOP && dt < this.TAP_TIME_MAX) {
+        this.handleTap(e.clientX, e.clientY);
+      }
+    }
+    this.mouseDown = false;
+  };
   private onMouseLeave = () => { this.mouseDown = false; };
 
   private onWheel = (e: WheelEvent) => {
@@ -776,6 +829,10 @@ export class GameEngine {
       this.touch2 = null;
       this.lastPanX = this.touch1.clientX;
       this.lastPanY = this.touch1.clientY;
+      this.pointerDownX = this.touch1.clientX;
+      this.pointerDownY = this.touch1.clientY;
+      this.pointerDownTime = performance.now();
+      this.pointerMaxMove = 0;
       this.panVelX = 0;
       this.panVelY = 0;
       this.isDragging = true;
@@ -793,6 +850,10 @@ export class GameEngine {
       const t = e.touches[0];
       const dx = t.clientX - this.lastPanX;
       const dy = t.clientY - this.lastPanY;
+      this.pointerMaxMove = Math.max(
+        this.pointerMaxMove,
+        Math.hypot(t.clientX - this.pointerDownX, t.clientY - this.pointerDownY)
+      );
       const cam = this.state.camera;
       const movX = -dx / cam.zoom;
       const movY = -dy / cam.zoom;
@@ -826,6 +887,14 @@ export class GameEngine {
 
   private onTouchEnd = (e: TouchEvent) => {
     e.preventDefault();
+    if (e.touches.length === 0 && this.touch1 && !this.touch2) {
+      // Single-finger lift — could be a tap. Touch slop is generous on mobile.
+      const dt = performance.now() - this.pointerDownTime;
+      const TOUCH_SLOP = 14;
+      if (this.pointerMaxMove < TOUCH_SLOP && dt < this.TAP_TIME_MAX) {
+        this.handleTap(this.touch1.clientX, this.touch1.clientY);
+      }
+    }
     if (e.touches.length < 2) {
       this.touch2 = null;
     }
@@ -869,6 +938,8 @@ export class GameEngine {
 
     this.tickTime(dt);
     this.tickCitizenMovement(dt);
+    this.tickCombat(dt);
+    this.tickSparks(dt);
     this.render();
 
     if (now - this.lastSaveTime > SAVE_INTERVAL_MS) {
@@ -1033,6 +1104,9 @@ export class GameEngine {
     // Pass 5.5: citizens (NPCs walking the world)
     this.renderCitizens(startRow, endRow, startCol, endCol);
 
+    // Phase 4: combat sparks (drawn above citizens, still in world space)
+    this.renderSparks();
+
     ctx.restore();
 
     // Pass 6: vignette overlay
@@ -1045,6 +1119,48 @@ export class GameEngine {
 
   public setTimeScale(scale: 0 | 1 | 2) {
     this.state.time.timeScale = scale;
+  }
+
+  /**
+   * Phase 4: Convert a screen-space tap to world-space and find the closest
+   * living citizen within a tap-tolerant radius. Hitboxes are larger than the
+   * sprite so mobile fingers reliably hit a target even at low zoom.
+   */
+  private handleTap(clientX: number, clientY: number) {
+    if (!this.callbacks.onCitizenTap) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const cam = this.state.camera;
+    const ts = this.state.grid.tileSize;
+    // Screen → world
+    const wx = (clientX - rect.left) / cam.zoom + cam.x;
+    const wy = (clientY - rect.top) / cam.zoom + cam.y;
+
+    // Tap tolerance: at least one tile of slop, more at low zoom — and a hard
+    // 24px screen-space minimum so fingers can always reach a target.
+    const tileTol = ts * 0.7;
+    const screenMinTol = 24 / cam.zoom; // 24px finger pad
+    const tol = Math.max(tileTol, screenMinTol);
+
+    let best: Citizen | null = null;
+    let bestDist = tol;
+    for (const c of this.state.citizens) {
+      if (c.state === "DEAD") continue;
+      const pos = getCitizenVisualPos(c);
+      const cx = pos.col * ts + ts * 0.5;
+      const cy = pos.row * ts + ts * 0.5;
+      const d = Math.hypot(wx - cx, wy - cy);
+      if (d < bestDist) {
+        bestDist = d;
+        best = c;
+      }
+    }
+    if (best) {
+      this.callbacks.onCitizenTap({
+        citizen: best,
+        screenX: clientX - rect.left,
+        screenY: clientY - rect.top,
+      });
+    }
   }
 
   public save() {

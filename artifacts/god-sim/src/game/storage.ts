@@ -151,6 +151,8 @@ interface SerializedState {
   nobleDissent?: GameState["nobleDissent"];
   chronicle?: ChronicleEntry[];
   lastRoyalYearTicked?: number;
+  dayNight?: GameState["dayNight"];
+  lastDayNightFlipMonth?: number;
 }
 
 export function saveState(state: GameState): void {
@@ -172,6 +174,8 @@ export function saveState(state: GameState): void {
       nobleDissent: state.nobleDissent,
       chronicle: state.chronicle,
       lastRoyalYearTicked: state.lastRoyalYearTicked,
+      dayNight: state.dayNight,
+      lastDayNightFlipMonth: state.lastDayNightFlipMonth,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(serialized));
   } catch (e) {
@@ -185,16 +189,26 @@ export function loadState(): GameState | null {
     if (!raw) return null;
     const s: SerializedState = JSON.parse(raw);
 
-    // v4 is current. We migrate from v2 (no citizens) and v3 (no royalty).
-    // Older versions are discarded.
-    if (s.version !== CURRENT_VERSION && s.version !== 2 && s.version !== 3) return null;
+    // v5 is current. We migrate from v2 (no citizens), v3 (no royalty), and
+    // v4 (no Phase-6 lifecycle/day-night). Older versions are discarded.
+    if (
+      s.version !== CURRENT_VERSION &&
+      s.version !== 2 &&
+      s.version !== 3 &&
+      s.version !== 4
+    ) {
+      return null;
+    }
 
     const tiles = decompressTiles(s.tilesData, s.gridMeta.rows, s.gridMeta.cols);
     const grid = { ...s.gridMeta, tiles };
     const civilization = s.civilization;
 
     let citizens: Citizen[];
-    if ((s.version === CURRENT_VERSION || s.version === 3) && Array.isArray(s.citizens)) {
+    if (
+      (s.version === CURRENT_VERSION || s.version === 4 || s.version === 3) &&
+      Array.isArray(s.citizens)
+    ) {
       // Backfill any fields added in mid-version code changes (e.g. faith,
       // crisisTimer, royalty fields) so save data from earlier dev builds keeps working.
       citizens = normalizeCitizens(s.citizens);
@@ -214,8 +228,9 @@ export function loadState(): GameState | null {
       nobleDissent: s.nobleDissent ?? "LOW",
       chronicle: s.chronicle ?? loadChronicle(),
       lastRoyalYearTicked: s.lastRoyalYearTicked ?? s.time.gameYear,
-      dayNight: "day",
-      lastDayNightFlipMonth: s.time.gameYear * 12 + s.time.gameMonth,
+      dayNight: s.dayNight ?? "day",
+      lastDayNightFlipMonth:
+        s.lastDayNightFlipMonth ?? s.time.gameYear * 12 + s.time.gameMonth,
     };
 
     // v3 → v4: no monarch existed. Anoint the existing population.

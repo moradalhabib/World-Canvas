@@ -4,6 +4,7 @@ import type {
   CivilizationState,
   GameState,
   Grid,
+  Profession,
 } from "./types";
 import { findPath, isWalkable } from "./pathfinding";
 import {
@@ -33,6 +34,16 @@ const ELDER_SPEED_MULTIPLIER = 0.7; // Phase 6: -30% movement for elders
 const GRAVESTONE_PROXIMITY_RADIUS = 2; // tiles
 const GRAVESTONE_SOCIAL_PENALTY = 0.5; // applied per tile-snap when near a grave
 
+/* Phase 4: Economy & Factions tunables */
+const GOODS_PER_MONTH_FARMER = 6;
+const GOODS_PER_MONTH_MINER = 5;
+const GUARD_STIPEND_VANITY = 1;       // tiny per-month vanity gain for guards
+const VANITY_NOBLE_THRESHOLD = 50;    // peasant → noble visual upgrade
+const VANITY_REBEL_THRESHOLD = 80;    // wealthy enough to bankroll rebellion
+const HOUSE_DEPOSIT_RADIUS = 3;       // tiles — proximity for converting goods
+const VANITY_PER_GOOD = 2;            // vanity per banked unit of goods
+const TREASURY_PER_GOOD = 1;          // gold per banked unit of goods (civ tax)
+
 /* Phase 6: Sleep & Safety */
 const HOMELESS_SAFETY_PENALTY = 35;       // safety lost when sleeping outside
 const SAFETY_RECOVERY_PER_NIGHT = 8;      // recovered when sleeping safely indoors
@@ -55,7 +66,7 @@ export function createCitizen(
   col: number,
   hue: number,
   socialTier: Citizen["socialTier"] = "peasant",
-  opts: { birthYear?: number; sex?: Citizen["sex"]; name?: string } = {}
+  opts: { birthYear?: number; sex?: Citizen["sex"]; name?: string; profession?: Profession } = {}
 ): Citizen {
   const sex = opts.sex ?? pickSex();
   return {
@@ -78,7 +89,16 @@ export function createCitizen(
     birthYear: opts.birthYear ?? 1,
     safety: 100,
     vanity: 0,
+    profession: opts.profession ?? "None",
+    goods: 0,
+    faction: "neutral",
   };
+}
+
+/** Phase 4: deterministic-ish profession spread for adult founders. */
+const PROFESSION_CYCLE: Profession[] = ["Farmer", "Farmer", "Miner", "Guard"];
+function pickProfessionForIndex(i: number): Profession {
+  return PROFESSION_CYCLE[i % PROFESSION_CYCLE.length];
 }
 
 /**
@@ -114,7 +134,10 @@ export function spawnInitialCitizens(
         const birthYear = 1 - founderAge; // current gameYear is 1 at world start
         // Force first founder male so the auto-anointed monarch is a King by name.
         const sex: Citizen["sex"] | undefined = out.length === 0 ? "male" : undefined;
-        out.push(createCitizen(r, c, hue, tier, { birthYear, sex }));
+        // Phase 4: King has no profession; the rest cycle Farmer/Farmer/Miner/Guard.
+        const profession: Profession =
+          out.length === 0 ? "None" : pickProfessionForIndex(out.length - 1);
+        out.push(createCitizen(r, c, hue, tier, { birthYear, sex, profession }));
       }
     }
   }
@@ -148,6 +171,14 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
     // Phase 6 backfill
     if (typeof c.safety !== "number") c.safety = 100;
     if (typeof c.vanity !== "number") c.vanity = 0;
+    // Phase 4 backfill
+    if (typeof c.goods !== "number") c.goods = 0;
+    if (c.profession !== "Farmer" && c.profession !== "Miner" && c.profession !== "Guard" && c.profession !== "None") {
+      c.profession = c.isKing ? "None" : pickProfessionForIndex(citizens.indexOf(c));
+    }
+    if (c.faction !== "rebel" && c.faction !== "royalist" && c.faction !== "neutral") {
+      c.faction = "neutral";
+    }
     // Legacy state values that no longer exist map to IDLE
     const validStates = new Set([
       "IDLE",
@@ -160,6 +191,7 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
       "MINISTERING",
       "SLEEPING",
       "REBEL",
+      "COMBAT",
     ]);
     if (!validStates.has(c.state as string)) c.state = "IDLE";
   }
@@ -217,6 +249,82 @@ function findNearestStealTarget(
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Phase 4: Economy + faction per-month tick                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Each game-month, working adults generate Goods. When they're standing within
+ * HOUSE_DEPOSIT_RADIUS of any house they "return home", banking goods → personal
+ * Vanity (gold) plus a small treasury contribution. High-Vanity NPCs visually
+ * upgrade to the noble (middle/high-class) sprite. During a Civil War (HIGH
+ * dissent) wealthy NPCs join the Rebellion and Guards remain Royalist.
+ */
+function tickEconomyAndFaction(
+  citizen: Citizen,
+  buildings: Building[],
+  civ: CivilizationState,
+  state: GameState
+): void {
+  const year = state.time.gameYear;
+  const stage = getLifeStage(citizen, year);
+  if (stage === "child") return;
+  if (citizen.isKing || citizen.isQueen || citizen.isDowagerQueen) return;
+
+  // 1) Production
+  const prof = citizen.profession ?? "None";
+  if (prof === "Farmer") {
+    citizen.goods = (citizen.goods ?? 0) + GOODS_PER_MONTH_FARMER;
+  } else if (prof === "Miner") {
+    citizen.goods = (citizen.goods ?? 0) + GOODS_PER_MONTH_MINER;
+  } else if (prof === "Guard") {
+    // Guards are paid a small stipend out of the treasury — keeps them loyal.
+    citizen.vanity = Math.min(999, citizen.vanity + GUARD_STIPEND_VANITY);
+  }
+
+  // 2) Banking — if near any house, convert goods → vanity + treasury
+  if ((citizen.goods ?? 0) > 0) {
+    let nearHouse = false;
+    for (const b of buildings) {
+      if (b.typeId !== "house_free" && b.typeId !== "house_middle" && b.typeId !== "house_high") continue;
+      if (Math.abs(b.row - citizen.row) + Math.abs(b.col - citizen.col) <= HOUSE_DEPOSIT_RADIUS) {
+        nearHouse = true;
+        break;
+      }
+    }
+    if (nearHouse) {
+      const goods = citizen.goods ?? 0;
+      citizen.vanity = Math.min(999, citizen.vanity + goods * VANITY_PER_GOOD);
+      civ.treasury += goods * TREASURY_PER_GOOD;
+      civ.resources.gold = civ.treasury;
+      citizen.goods = 0;
+    }
+  }
+
+  // 3) Visual upgrade — wealthy commoners become Noble-class sprites.
+  if (citizen.socialTier === "peasant" && citizen.vanity >= VANITY_NOBLE_THRESHOLD) {
+    citizen.socialTier = "noble";
+    addChronicle(state, `${citizen.name} has grown wealthy and risen to the noble class.`);
+  }
+
+  // 4) Faction allegiance — only meaningful during a Civil War.
+  if (state.nobleDissent === "HIGH") {
+    if (prof === "Guard" && citizen.vanity < VANITY_REBEL_THRESHOLD) {
+      if (citizen.faction !== "royalist") {
+        citizen.faction = "royalist";
+      }
+    } else if (citizen.vanity >= VANITY_REBEL_THRESHOLD) {
+      if (citizen.faction !== "rebel") {
+        citizen.faction = "rebel";
+        citizen.isRebel = true;
+        addChronicle(state, `${citizen.name} joins the Noble Rebellion.`);
+      }
+    }
+  } else {
+    citizen.faction = "neutral";
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Per-month "brain" tick                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -245,6 +353,13 @@ export function tickCitizenMonth(
 
   // Phase 6: Sleeping NPCs are inert until woken at dawn.
   if (citizen.state === "SLEEPING") return;
+
+  // Phase 4: Combat is resolved per-frame in the engine — skip the brain tick
+  // so combatants don't wander off mid-fight.
+  if (citizen.state === "COMBAT") return;
+
+  // Phase 4: Economy + faction tick (runs every month for living adults).
+  if (state) tickEconomyAndFaction(citizen, buildings, civ, state);
 
   // Phase 6: Children skip the work/crisis brain — they wander/idle. They
   // still age (birthYear) and can starve via civ-level food shortages.
