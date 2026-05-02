@@ -21,6 +21,9 @@ import {
   tickCitizenMonth,
   updateCitizenMovement,
   processNightSleep,
+  // Phase 12: Societal Fabric Engine
+  tickDoomsayerAura,
+  runRumorMill,
   processDayWake,
   recordCombatWitnesses,
 } from "./npc";
@@ -221,6 +224,13 @@ export class GameEngine {
    */
   private fpsEma = 60;
   private fpsLastSampleAt = 0;
+  /**
+   * Phase 12: Rumor Mill accumulator. The proximity-check pass is O(N) (with
+   * spatial bucketing) but it allocates a Map + walks every NPC, so we MUST
+   * gate it to once-per-second rather than every frame. 1000 ms ≈ 60 ticks
+   * @ 60 FPS — well within the perf budget.
+   */
+  private rumorAccMs = 0;
 
   /** Hidden land-value map driving social hierarchy. */
   private desirability!: DesirabilityMap;
@@ -358,6 +368,11 @@ export class GameEngine {
         this.state
       );
     }
+
+    // Phase 12: After every NPC has ticked, apply the DOOMSAYER faith aura
+    // (drains -1 faith from each citizen within 3 tiles of any active
+    // DOOMSAYER). Cheap when no doomsayers exist; O(D × N) otherwise.
+    tickDoomsayerAura(this.state);
 
     // Phase 3B: once per game-year, run aging, natural death, heir maturity
     // and royal reproduction. We compare to lastRoyalYearTicked rather than
@@ -1677,6 +1692,62 @@ export class GameEngine {
       }
 
       if (lifeScale !== 1) ctx.restore();
+
+      /* ---------- Phase 12: Chat bubble + Mental-Break overlays ----------
+       * Drawn AFTER lifeScale restore so they sit at "true" pixel sizes,
+       * unaffected by child/elder scale. Anchored above the head at
+       * cy − ts * 1.0 to clear the sprite. Skipped at very low zoom to
+       * avoid render-cost on the world overview.
+       */
+      if (cam.zoom > 0.4) {
+        const bubbleCy = cy - ts * 1.0;
+        if (c.state === "CHATTING") {
+          // Tiny "..." pill speech bubble.
+          const w = ts * 0.36;
+          const h = ts * 0.18;
+          ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+          ctx.strokeStyle = "rgba(20, 20, 30, 0.85)";
+          ctx.lineWidth = Math.max(1, ts * 0.012);
+          // Pill body
+          ctx.beginPath();
+          ctx.ellipse(cx, bubbleCy, w / 2, h / 2, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          // Three black dots
+          ctx.fillStyle = "rgba(20, 20, 30, 0.9)";
+          const dotR = ts * 0.025;
+          const dotGap = ts * 0.07;
+          for (let i = -1; i <= 1; i++) {
+            ctx.beginPath();
+            ctx.arc(cx + i * dotGap, bubbleCy, dotR, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        } else if (c.state === "MENTAL_BREAK") {
+          let glyph = "?";
+          let color = "#ffd64a";
+          if (c.breakKind === "DOOMSAYER") { glyph = "!"; color = "#ff4848"; }
+          else if (c.breakKind === "RECLUSE") { glyph = "?"; color = "#9aa6c0"; }
+          else if (c.breakKind === "THIEF")   { glyph = "$"; color = "#ffd64a"; }
+          // Soft halo behind the glyph for legibility on bright tiles.
+          const haloR = ts * 0.16;
+          const grad = ctx.createRadialGradient(cx, bubbleCy, ts * 0.02, cx, bubbleCy, haloR);
+          grad.addColorStop(0, color + "cc");
+          grad.addColorStop(1, color + "00");
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(cx, bubbleCy, haloR, 0, Math.PI * 2);
+          ctx.fill();
+          // Glyph itself.
+          ctx.fillStyle = "#0d1117";
+          ctx.strokeStyle = color;
+          ctx.lineWidth = Math.max(1, ts * 0.018);
+          ctx.font = `bold ${Math.round(ts * 0.28)}px Georgia, serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.strokeText(glyph, cx, bubbleCy);
+          ctx.fillText(glyph, cx, bubbleCy);
+        }
+      }
     }
   }
 
@@ -2243,10 +2314,27 @@ export class GameEngine {
       this.fpsLastSampleAt = now;
     }
 
+    // Phase 12: advance the wall-clock counter every frame so CHATTING
+    // expirations + future time-based contagion stay in sync (the engine
+    // never gets per-frame ms updates from anywhere else).
+    this.state.time.totalRealMs += dt;
+
     this.tickTime(dt);
     this.tickCitizenMovement(dt);
     this.tickCombat(dt);
     this.tickSparks(dt);
+
+    // Phase 12: Rumor Mill — gated to once per second to keep the O(N)
+    // bucketed proximity scan from running 60×/s. Pause completely when
+    // the player has frozen time (timeScale === 0).
+    if (this.state.time.timeScale > 0) {
+      this.rumorAccMs += dt;
+      if (this.rumorAccMs >= 1000) {
+        runRumorMill(this.state);
+        this.rumorAccMs = 0;
+      }
+    }
+
     this.render();
 
     if (now - this.lastSaveTime > SAVE_INTERVAL_MS) {
@@ -2268,8 +2356,13 @@ export class GameEngine {
     const buildings = this.state.buildings;
     const all = this.state.citizens;
     const civ = this.state.civilization;
+    // Phase 12 fix: pass `this.state` so updateCitizenMovement uses the
+    // canonical `state.time.totalRealMs` clock for CHATTING expiry. Without
+    // it, the fallback to performance.now() (which resets on page load)
+    // can leave NPCs stuck in CHATTING forever after a reload, since
+    // chatUntilMs was stamped against the much-larger persisted totalRealMs.
     for (const c of all) {
-      updateCitizenMovement(c, dtMs, ts, buildings, all, civ);
+      updateCitizenMovement(c, dtMs, ts, buildings, all, civ, this.state);
     }
   }
 

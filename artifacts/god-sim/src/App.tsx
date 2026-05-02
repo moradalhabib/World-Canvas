@@ -398,6 +398,7 @@ export default function App() {
           >
             <div className="monologue-name">
               {monologue.citizen.name}
+              {monologue.citizen.lastName ? ` ${monologue.citizen.lastName}` : ""}
               <span className="monologue-role">
                 {monologue.citizen.isKing ? "the King"
                   : monologue.citizen.isDowagerQueen ? "Dowager Queen"
@@ -410,6 +411,71 @@ export default function App() {
                     : "Citizen"}
               </span>
             </div>
+            {/* Phase 12: micro-state line + mood bar */}
+            {(() => {
+              const c = monologue.citizen;
+              const microState = (() => {
+                switch (c.state) {
+                  case "CHATTING": return "Chatting";
+                  case "MENTAL_BREAK":
+                    if (c.breakKind === "DOOMSAYER") return "Mental Break: Doomsayer";
+                    if (c.breakKind === "RECLUSE") return "Mental Break: Recluse";
+                    if (c.breakKind === "THIEF") return "Mental Break: Thief";
+                    return "Mental Break";
+                  case "PRAYING": return "Praying";
+                  case "SLEEPING": return "Sleeping";
+                  case "COMBAT": return "In Combat";
+                  case "DEAD": return "Deceased";
+                  case "FLEEING": return "Fleeing";
+                  case "SEEK_FOOD": return "Seeking Food";
+                  case "ROGUE": return "Rogue";
+                  case "REBEL": return "Rebel";
+                  case "MOVING": return c.targetTile ? "Traveling" : "Walking";
+                  case "WORKING": return "Working";
+                  case "MINISTERING": return "Ministering";
+                  case "IDLE":
+                  default: return "Idle";
+                }
+              })();
+              const mood = typeof c.mood === "number" ? c.mood : 100;
+              // Color shifts green → yellow → red as mood drops.
+              const moodColor =
+                mood >= 66 ? "#4ade80" :
+                mood >= 33 ? "#fde047" :
+                "#ef4444";
+              return (
+                <div style={{ marginTop: 6 }}>
+                  <div style={{
+                    fontSize: 11,
+                    color: "#c8b890",
+                    fontStyle: "italic",
+                    marginBottom: 4,
+                  }}>
+                    {microState}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{
+                      flex: 1,
+                      height: 6,
+                      background: "rgba(0,0,0,0.45)",
+                      borderRadius: 3,
+                      overflow: "hidden",
+                      border: "1px solid rgba(180, 160, 100, 0.3)",
+                    }}>
+                      <div style={{
+                        width: `${Math.max(0, Math.min(100, mood))}%`,
+                        height: "100%",
+                        background: moodColor,
+                        transition: "width 0.3s ease, background 0.3s ease",
+                      }} />
+                    </div>
+                    <span style={{ fontSize: 10, color: "#e8d8a8", minWidth: 64, textAlign: "right" }}>
+                      Mood {Math.round(mood)}/100
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
             <div className="monologue-text">"{buildMonologue(monologue.citizen)}"</div>
             {/* Phase 9: Trait + Skill Level + grudge readout. */}
             {(() => {

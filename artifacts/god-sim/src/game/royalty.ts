@@ -19,7 +19,9 @@ import type {
   ChronicleEntry,
 } from "./types";
 import { findPath } from "./pathfinding";
-import { createCitizen } from "./npc";
+import { createCitizen, pickLastName } from "./npc";
+import { ALL_TRAITS } from "./types";
+import type { CitizenTrait } from "./types";
 
 /* -------------------------------------------------------------------------- */
 /*  Tunables                                                                  */
@@ -63,6 +65,43 @@ export function pickName(sex: Citizen["sex"]): string {
 
 export function pickSex(): Citizen["sex"] {
   return Math.random() < 0.5 ? "male" : "female";
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Phase 12: Inherited Genetics (lastName + trait)                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Phase 12: 50% probability the child inherits one parent's trait
+ * (random of mother/father), otherwise a fresh random trait.
+ *
+ * Why 50/50: the spec wants visible familial traits ("the Greedy Bakers"
+ * become a thing) without making every dynasty completely homogeneous.
+ */
+export function inheritTrait(
+  mother: Citizen,
+  father: Citizen | undefined
+): CitizenTrait {
+  if (Math.random() < 0.5) {
+    const parentTraits: CitizenTrait[] = [];
+    if (mother.trait) parentTraits.push(mother.trait);
+    if (father?.trait) parentTraits.push(father.trait);
+    if (parentTraits.length > 0) {
+      return parentTraits[Math.floor(Math.random() * parentTraits.length)];
+    }
+  }
+  return ALL_TRAITS[Math.floor(Math.random() * ALL_TRAITS.length)];
+}
+
+/**
+ * Phase 12: Surnames pass matrilineally — every child takes the mother's
+ * lastName. Falls back to a random one if the mother predates the Phase 12
+ * migration and somehow lacks one.
+ */
+export function inheritLastName(mother: Citizen): string {
+  return mother.lastName && mother.lastName.length > 0
+    ? mother.lastName
+    : pickLastName();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -212,17 +251,29 @@ export function tryRoyalReproduction(state: GameState): void {
   if (Math.random() > ROYAL_FERTILITY_CHANCE) return;
 
   const sex = pickSex();
-  const baby = createCitizen(king.row, king.col, Math.floor(Math.random() * 360), "noble");
-  baby.name = pickName(sex);
-  baby.sex = sex;
-  baby.birthYear = state.time.gameYear;
+  // Phase 12: heirs inherit the dynasty surname (the King's lastName) so
+  // "House Crown" / "House Iron" emerges naturally. Trait inheritance follows
+  // the same 50/50 inheritTrait rule as commoners.
+  const baby = createCitizen(
+    king.row,
+    king.col,
+    Math.floor(Math.random() * 360),
+    "noble",
+    {
+      birthYear: state.time.gameYear,
+      sex,
+      name: pickName(sex),
+      lastName: king.lastName ?? inheritLastName(queen),
+      trait: inheritTrait(queen, king),
+    }
+  );
   baby.isPrince = true;
   baby.legitimacy = 100;
   state.citizens.push(baby);
 
   addChronicle(
     state,
-    `An heir is born to King ${king.name} and Queen ${queen.name}: ${baby.name}.`
+    `An heir is born to King ${king.name} and Queen ${queen.name}: ${baby.name} ${baby.lastName ?? ""}`.trim() + "."
   );
 }
 
@@ -555,17 +606,24 @@ export function tryCivilianReproduction(state: GameState, buildings: Building[])
     const mother = females[Math.floor(Math.random() * females.length)];
 
     const sex = pickSex();
+    // Phase 12: inherit mother's lastName + a 50/50 chance of one parent's trait.
     const baby = createCitizen(
       mother.row,
       mother.col,
       Math.floor(Math.random() * 360),
       "peasant",
-      { birthYear: state.time.gameYear, sex, name: pickName(sex) }
+      {
+        birthYear: state.time.gameYear,
+        sex,
+        name: pickName(sex),
+        lastName: inheritLastName(mother),
+        trait: inheritTrait(mother, father),
+      }
     );
     state.citizens.push(baby);
     addChronicle(
       state,
-      `A child, ${baby.name}, is born to ${father.name} and ${mother.name}.`
+      `A child, ${baby.name} ${baby.lastName}, is born to ${father.name} ${father.lastName ?? ""} and ${mother.name} ${mother.lastName ?? ""}.`.replace(/\s+/g, " ")
     );
   }
 }

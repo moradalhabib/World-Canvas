@@ -72,6 +72,45 @@ const SAFETY_RECOVERY_PER_NIGHT = 8;      // recovered when sleeping safely indo
 const LOW_SAFETY_REBEL_THRESHOLD = 25;    // below this, ROGUE becomes REBEL during civil war
 const ASSASSINATION_RADIUS = 1;           // tiles — rebels at this range can kill the King
 
+/* Phase 12: Societal Fabric Engine tunables */
+const MOOD_DRAIN_HUNGRY = 10;             // mood lost per month when hunger > 80
+const MOOD_DRAIN_UNSAFE = 10;             // mood lost per month when safety < 20
+const MOOD_BUFF_MASTERY = 5;              // mood gained per month at skill level 10+
+const MOOD_REGEN_PER_MONTH = 2;           // passive mood regen when no stressor active
+const MENTAL_BREAK_THIEF_STEAL = 100;     // gold a Greedy thief loots from treasury
+const MENTAL_BREAK_RECLUSE_MONTHS = 3;    // months a Coward hides indoors before recovery
+const DOOMSAYER_AURA_RADIUS = 3;          // tiles — drains -1 faith from each citizen in range
+const RUMOR_MILL_INTERVAL_MS = 1000;      // ~60 ticks @ 60 FPS — proximity check cadence
+const RUMOR_PROXIMITY_TILES = 2;          // chebyshev distance for two NPCs to chat
+const RUMOR_CHAT_CHANCE = 0.10;           // 10% chance per qualifying pair per check
+const RUMOR_CHAT_DURATION_MS = 2000;      // CHATTING state lifetime
+const RUMOR_DISSENT_GAIN = 15;            // dissent added when rebel infects royalist
+const RUMOR_DISSENT_FLIP = 80;            // dissent threshold to flip royalist → rebel
+const RUMOR_DISSENT_FLIP_VANITY = 60;     // must also be wealthy enough to bankroll rebellion
+const RUMOR_DISSENT_CHANCE = 0.25;        // 25% chance per chat
+const RUMOR_HERETIC_FAITH_THRESHOLD = 20; // faith < this → counted as a "heretic" carrier
+const RUMOR_HERETIC_FAITH_LOSS = 5;       // faith B loses when chatting with a heretic A
+
+/* -------------------------------------------------------------------------- */
+/*  Phase 12: Family surnames                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Phase 12: Pool of medieval English occupational/locative surnames.
+ * Founders draw randomly; civilian children inherit their mother's.
+ * Royal children inherit the dynasty surname (the King's lastName).
+ */
+export const LAST_NAMES: string[] = [
+  "Baker", "Smith", "Iron", "Crown", "Stone", "Wood",
+  "Fields", "Rivers", "Hill", "Cooper", "Mason", "Fletcher",
+  "Ward", "Reeve", "Carter", "Tanner", "Thatcher", "Weaver",
+  "Hunter", "Fisher", "Black", "White", "Gray", "Brown",
+];
+
+export function pickLastName(): string {
+  return LAST_NAMES[Math.floor(Math.random() * LAST_NAMES.length)];
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Spawning & creation                                                       */
 /* -------------------------------------------------------------------------- */
@@ -88,7 +127,16 @@ export function createCitizen(
   col: number,
   hue: number,
   socialTier: Citizen["socialTier"] = "peasant",
-  opts: { birthYear?: number; sex?: Citizen["sex"]; name?: string; profession?: Profession } = {}
+  opts: {
+    birthYear?: number;
+    sex?: Citizen["sex"];
+    name?: string;
+    profession?: Profession;
+    /** Phase 12: explicit surname (used by inheritance). Random if omitted. */
+    lastName?: string;
+    /** Phase 12: explicit trait (used by inheritance). Random if omitted. */
+    trait?: CitizenTrait;
+  } = {}
 ): Citizen {
   const sex = opts.sex ?? pickSex();
   return {
@@ -115,9 +163,13 @@ export function createCitizen(
     goods: 0,
     faction: "neutral",
     // Phase 9: Pick a trait, init skills + empty memory graph.
-    trait: ALL_TRAITS[Math.floor(Math.random() * ALL_TRAITS.length)],
+    trait: opts.trait ?? ALL_TRAITS[Math.floor(Math.random() * ALL_TRAITS.length)],
     skills: { level: 1, xp: 0 },
     memory: {},
+    // Phase 12: family + psychology + contagion fields
+    lastName: opts.lastName ?? pickLastName(),
+    mood: 100,
+    dissent: 0,
   };
 }
 
@@ -264,6 +316,30 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
     if (!c.memory || typeof c.memory !== "object" || Array.isArray(c.memory)) {
       c.memory = {};
     }
+    // Phase 12 backfill — Societal Fabric Engine fields.
+    if (typeof c.lastName !== "string" || c.lastName.length === 0) {
+      c.lastName = pickLastName();
+    }
+    if (typeof c.mood !== "number" || c.mood < 0 || c.mood > 100) {
+      c.mood = 100;
+    }
+    if (typeof c.dissent !== "number" || c.dissent < 0) {
+      c.dissent = 0;
+    }
+    // Defensive: clear any partial Phase-12 transient state from a crashed save.
+    if (c.state !== "MENTAL_BREAK") {
+      c.breakKind = undefined;
+      c.breakUntilMonth = undefined;
+    }
+    if (c.state !== "CHATTING") {
+      c.chatUntilMs = undefined;
+      c.chatPartnerId = undefined;
+    } else if (typeof c.chatUntilMs !== "number") {
+      // Save was persisted mid-chat with a corrupted timer — softlock guard:
+      // drop them back to IDLE rather than leave them stuck speaking forever.
+      c.state = "IDLE";
+      c.chatPartnerId = undefined;
+    }
     // Legacy state values that no longer exist map to IDLE
     const validStates = new Set([
       "IDLE",
@@ -278,6 +354,8 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
       "REBEL",
       "COMBAT",
       "FLEEING",
+      "MENTAL_BREAK",
+      "CHATTING",
     ]);
     if (!validStates.has(c.state as string)) c.state = "IDLE";
   }
@@ -483,6 +561,36 @@ export function tickCitizenMonth(
     return;
   }
 
+  // ---- Phase 12: handle ongoing MENTAL_BREAK state (RECLUSE timer) -------
+  // The THIEF break completes via the arrival branch in updateCitizenMovement.
+  // The DOOMSAYER break exits when mood naturally regenerates above 20.
+  // The RECLUSE break exits when its breakUntilMonth has elapsed.
+  if (citizen.state === "MENTAL_BREAK") {
+    const monthIdx = state ? state.time.gameYear * 12 + state.time.gameMonth : 0;
+    if (citizen.breakKind === "RECLUSE") {
+      if (typeof citizen.breakUntilMonth === "number" && monthIdx >= citizen.breakUntilMonth) {
+        citizen.state = "IDLE";
+        citizen.breakKind = undefined;
+        citizen.breakUntilMonth = undefined;
+        citizen.mood = 50; // post-recluse: stable but not euphoric
+      }
+      return; // recluses do not work / chat / repath while hiding
+    }
+    if (citizen.breakKind === "DOOMSAYER") {
+      // Doomsayer slow recovery: +3 mood/month. Faith-drain aura is a
+      // separate pass (see tickDoomsayerAura — runs once per simulated month).
+      citizen.mood = Math.min(100, (citizen.mood ?? 0) + 3);
+      if ((citizen.mood ?? 0) >= 25) {
+        citizen.state = "IDLE";
+        citizen.breakKind = undefined;
+      }
+      return;
+    }
+    // THIEF and any unknown breakKind fall through and let updateCitizenMovement
+    // resolve them (path arrival → reset).
+    return;
+  }
+
   // Phase 6: Promote ROGUE to REBEL when civil war is underway and the NPC
   // feels unsafe. REBELs behave like ROGUEs but are eligible to seize the
   // crown if they (or a comrade) topple the King.
@@ -559,6 +667,22 @@ export function tickCitizenMonth(
   const faithDecay =
     citizen.trait === "Zealot" ? ZEALOT_FAITH_DECAY : NORMAL_FAITH_DECAY;
   citizen.faith = Math.max(0, citizen.faith - faithDecay);
+
+  // ---- Phase 12: Mood update + mental-break trigger ----------------------
+  // Stressors drain mood. Mastery (level 10+) is a permanent passive buff.
+  // No active stressor → mood naturally recovers a bit each month.
+  let mood = typeof citizen.mood === "number" ? citizen.mood : 100;
+  let stressed = false;
+  if (citizen.hunger > 80) { mood -= MOOD_DRAIN_HUNGRY; stressed = true; }
+  if (citizen.safety < 20) { mood -= MOOD_DRAIN_UNSAFE; stressed = true; }
+  if ((citizen.skills?.level ?? 0) >= 10) mood += MOOD_BUFF_MASTERY;
+  if (!stressed) mood += MOOD_REGEN_PER_MONTH;
+  citizen.mood = Math.max(0, Math.min(100, mood));
+
+  if (citizen.mood === 0 && state) {
+    triggerMentalBreak(citizen, grid, buildings, civ, state);
+    return; // mental break resolves on its own; skip the SEEK_FOOD branch
+  }
 
   // --- 4. CRISIS BRANCH: hunger maxed out → independent choice -------------
   if (citizen.hunger >= HUNGER_CRISIS_THRESHOLD) {
@@ -671,14 +795,32 @@ export function updateCitizenMovement(
 ): void {
   if (timeScale === 0) return;
   if (citizen.state === "DEAD" || citizen.state === "PRAYING" || citizen.state === "SLEEPING") return;
+
+  // Phase 12: CHATTING NPCs stand still until their chat timer expires.
+  // The pair was symmetrically set in runRumorMill; we exit independently
+  // (no need to coordinate — the partner exits on their own next tick).
+  if (citizen.state === "CHATTING") {
+    const now = state?.time.totalRealMs ?? performance.now();
+    if (typeof citizen.chatUntilMs === "number" && now >= citizen.chatUntilMs) {
+      citizen.state = "IDLE";
+      citizen.chatUntilMs = undefined;
+      citizen.chatPartnerId = undefined;
+    }
+    return;
+  }
+
   if (citizen.path.length === 0 || citizen.pathIndex >= citizen.path.length) return;
 
-  // SEEK_FOOD/ROGUE/REBEL/FLEEING keep their named state; otherwise mark MOVING for HUD
+  // SEEK_FOOD/ROGUE/REBEL/FLEEING/MENTAL_BREAK keep their named state for the
+  // HUD + render overlays; everything else gets the generic MOVING tag while
+  // walking. (Phase 12: MENTAL_BREAK preserved so the THIEF/RECLUSE overlays
+  // stay visible while the NPC is in transit toward their target.)
   if (
     citizen.state !== "SEEK_FOOD" &&
     citizen.state !== "ROGUE" &&
     citizen.state !== "REBEL" &&
-    citizen.state !== "FLEEING"
+    citizen.state !== "FLEEING" &&
+    citizen.state !== "MENTAL_BREAK"
   ) {
     citizen.state = "MOVING";
   }
@@ -748,9 +890,258 @@ export function updateCitizenMovement(
       }
     }
 
+    // Phase 12: THIEF mental break completes on arrival at the treasury.
+    // Drain 100 gold from the treasury, convert to personal vanity, restore
+    // mood enough that they exit the break, and reset to IDLE. We key on
+    // breakKind (not state) because state was set to MENTAL_BREAK earlier and
+    // either preserved or transparently widened through the move loop.
+    if (citizen.breakKind === "THIEF") {
+      const stolen = Math.min(MENTAL_BREAK_THIEF_STEAL, civ.treasury);
+      civ.treasury -= stolen;
+      civ.resources.gold = civ.treasury;
+      citizen.vanity = Math.min(999, citizen.vanity + stolen);
+      citizen.mood = 60;
+      citizen.breakKind = undefined;
+      if (state && stolen > 0) {
+        addChronicle(
+          state,
+          `${citizen.name} ${citizen.lastName ?? ""}, snapped by greed, plunders ${stolen} gold from the treasury.`.replace(/\s+/g, " ")
+        );
+      }
+    }
+
+    // Phase 12 fix: a RECLUSE arriving home must STAY in MENTAL_BREAK so
+    // their 3-month hide timer (handled by tickCitizenMonth) can run. If we
+    // reset to IDLE here, the Coward instantly recovers the moment the path
+    // ends, violating the spec.
+    if (citizen.breakKind === "RECLUSE") {
+      citizen.targetTile = undefined;
+      citizen.targetBuildingId = undefined;
+      return;
+    }
+
     citizen.state = "IDLE";
     citizen.targetTile = undefined;
     citizen.targetBuildingId = undefined;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Phase 12: Societal Fabric Engine — Mental Breaks                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Phase 12: When a citizen's mood hits 0, branch into a trait-driven break:
+ *   • Zealot   → DOOMSAYER  (wanders, drains nearby faith)
+ *   • Coward   → RECLUSE    (paths to nearest house, hides for 3 months)
+ *   • Greedy   → THIEF      (paths to treasury, loots 100 gold on arrival)
+ *   • Diligent → no break, just regen mood (handled by caller)
+ */
+function triggerMentalBreak(
+  citizen: Citizen,
+  grid: Grid,
+  buildings: Building[],
+  civ: CivilizationState,
+  state: GameState
+): void {
+  // Diligent NPCs are mentally tough — no break, just bounce mood up so they
+  // don't sit at 0 and re-trigger every tick.
+  if (citizen.trait === "Diligent" || !citizen.trait) {
+    citizen.mood = 25;
+    return;
+  }
+
+  if (citizen.trait === "Zealot") {
+    citizen.state = "MENTAL_BREAK";
+    citizen.breakKind = "DOOMSAYER";
+    citizen.path = [];
+    citizen.pathIndex = 0;
+    citizen.progress = 0;
+    citizen.targetTile = undefined;
+    citizen.targetBuildingId = undefined;
+    addChronicle(
+      state,
+      `${citizen.name} ${citizen.lastName ?? ""} has lost their faith and now wanders preaching doom.`.replace(/\s+/g, " ")
+    );
+    return;
+  }
+
+  if (citizen.trait === "Coward") {
+    const home = findNearestHome(citizen.row, citizen.col, buildings);
+    citizen.state = "MENTAL_BREAK";
+    citizen.breakKind = "RECLUSE";
+    citizen.breakUntilMonth =
+      state.time.gameYear * 12 + state.time.gameMonth + MENTAL_BREAK_RECLUSE_MONTHS;
+    if (home) {
+      const path = findPath(grid, citizen.row, citizen.col, home.row, home.col);
+      if (path && path.length > 0) {
+        citizen.path = path;
+        citizen.pathIndex = 0;
+        citizen.progress = 0;
+        citizen.targetTile = { row: home.row, col: home.col };
+        citizen.targetBuildingId = home.id;
+        citizen.homeBuildingId = home.id;
+      } else {
+        citizen.path = [];
+        citizen.pathIndex = 0;
+      }
+    }
+    addChronicle(
+      state,
+      `${citizen.name} ${citizen.lastName ?? ""}, overcome with fear, has shut themselves indoors.`.replace(/\s+/g, " ")
+    );
+    return;
+  }
+
+  if (citizen.trait === "Greedy") {
+    citizen.state = "MENTAL_BREAK";
+    citizen.breakKind = "THIEF";
+    const target = { row: civ.founded.row, col: civ.founded.col };
+    const path = findPath(grid, citizen.row, citizen.col, target.row, target.col);
+    if (path && path.length > 0) {
+      citizen.path = path;
+      citizen.pathIndex = 0;
+      citizen.progress = 0;
+      citizen.targetTile = target;
+      citizen.targetBuildingId = undefined;
+    } else {
+      // Unreachable treasury — abort the break gracefully.
+      citizen.state = "IDLE";
+      citizen.breakKind = undefined;
+      citizen.mood = 25;
+    }
+    return;
+  }
+
+  // Defensive fallback for any future trait we haven't handled here.
+  citizen.mood = 25;
+}
+
+/**
+ * Phase 12: Once-per-month aura tick. Every active DOOMSAYER drains 1 faith
+ * from each living citizen within DOOMSAYER_AURA_RADIUS tiles. O(D × N) where
+ * D is the (typically tiny) doomsayer count, so steady-state cost is fine.
+ */
+export function tickDoomsayerAura(state: GameState): void {
+  const doomsayers = state.citizens.filter(
+    (c) => c.state === "MENTAL_BREAK" && c.breakKind === "DOOMSAYER"
+  );
+  if (doomsayers.length === 0) return;
+  for (const d of doomsayers) {
+    for (const other of state.citizens) {
+      if (other.id === d.id) continue;
+      if (other.state === "DEAD") continue;
+      const dr = Math.abs(other.row - d.row);
+      const dc = Math.abs(other.col - d.col);
+      if (Math.max(dr, dc) <= DOOMSAYER_AURA_RADIUS) {
+        other.faith = Math.max(0, other.faith - 1);
+      }
+    }
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Phase 12: Societal Fabric Engine — Rumor Mill (social contagion)          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Phase 12: Rumor mill proximity check. Designed to run AT MOST once every
+ * RUMOR_MILL_INTERVAL_MS (≈ 1 second / 60 ticks at 60 FPS) — the engine loop
+ * gates the call cadence, NOT this function. If you call me every frame
+ * you will tank performance.
+ *
+ * Optimization strategy:
+ *   1. Bucket every IDLE/MOVING citizen into a 2-tile spatial hash so we
+ *      check at most the 9 neighboring buckets, not the full N² cross-product.
+ *   2. Inside a bucket, pair-check is still O(k²) per bucket but k is small
+ *      (typically 1–3 NPCs share a bucket).
+ *   3. Citizens already CHATTING / MENTAL_BREAK / DEAD are skipped early.
+ *
+ * On a successful chat:
+ *   • Both NPCs flip to CHATTING for RUMOR_CHAT_DURATION_MS milliseconds.
+ *   • Contagion is applied symmetrically (A → B and B → A).
+ */
+export function runRumorMill(state: GameState): void {
+  const now = state.time.totalRealMs;
+  // 1) Build the spatial hash. Bucket size = 2 tiles (matches proximity).
+  const BUCKET = 2;
+  const buckets = new Map<string, Citizen[]>();
+  const eligible: Citizen[] = [];
+  for (const c of state.citizens) {
+    if (c.state !== "IDLE" && c.state !== "MOVING") continue;
+    eligible.push(c);
+    const key = `${Math.floor(c.row / BUCKET)},${Math.floor(c.col / BUCKET)}`;
+    let arr = buckets.get(key);
+    if (!arr) { arr = []; buckets.set(key, arr); }
+    arr.push(c);
+  }
+  if (eligible.length < 2) return;
+
+  // 2) For each eligible citizen, check the 9 neighboring buckets.
+  // Use a "pair seen" set keyed by sorted-id so we don't double-process.
+  const seen = new Set<string>();
+  for (const a of eligible) {
+    if (a.state === "CHATTING") continue; // freshly flipped this pass
+    const br = Math.floor(a.row / BUCKET);
+    const bc = Math.floor(a.col / BUCKET);
+    for (let dbr = -1; dbr <= 1; dbr++) {
+      for (let dbc = -1; dbc <= 1; dbc++) {
+        const neighbors = buckets.get(`${br + dbr},${bc + dbc}`);
+        if (!neighbors) continue;
+        for (const b of neighbors) {
+          if (b.id === a.id) continue;
+          if (b.state === "CHATTING") continue;
+          // Stable pair key — ids in lexical order — so A↔B is processed once.
+          const pairKey = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+          if (seen.has(pairKey)) continue;
+          seen.add(pairKey);
+          // Final geometric check (chebyshev distance).
+          const dr = Math.abs(a.row - b.row);
+          const dc = Math.abs(a.col - b.col);
+          if (Math.max(dr, dc) > RUMOR_PROXIMITY_TILES) continue;
+          if (Math.random() > RUMOR_CHAT_CHANCE) continue;
+          // Flip both into CHATTING and apply contagion symmetrically.
+          startChat(a, b, now);
+          applyContagion(a, b);
+          applyContagion(b, a);
+        }
+      }
+    }
+  }
+}
+
+/** Phase 12: symmetric CHATTING transition. */
+function startChat(a: Citizen, b: Citizen, nowMs: number): void {
+  const until = nowMs + RUMOR_CHAT_DURATION_MS;
+  // Preserve any active path so they resume walking after the chat.
+  a.state = "CHATTING";
+  a.chatUntilMs = until;
+  a.chatPartnerId = b.id;
+  b.state = "CHATTING";
+  b.chatUntilMs = until;
+  b.chatPartnerId = a.id;
+}
+
+/**
+ * Phase 12: Contagion from carrier `from` → susceptible `to`.
+ *  • Rebel → Royalist : 25% chance to add dissent. At ≥80 dissent + ≥60
+ *    vanity, the royalist flips to rebel (joins the rebellion).
+ *  • Heretic (faith < 20) → believer : -5 faith.
+ */
+function applyContagion(from: Citizen, to: Citizen): void {
+  // Rebellion contagion
+  if (from.faction === "rebel" && to.faction === "royalist") {
+    if (Math.random() < RUMOR_DISSENT_CHANCE) {
+      to.dissent = Math.min(100, (to.dissent ?? 0) + RUMOR_DISSENT_GAIN);
+      if ((to.dissent ?? 0) >= RUMOR_DISSENT_FLIP && (to.vanity ?? 0) >= RUMOR_DISSENT_FLIP_VANITY) {
+        to.faction = "rebel";
+        to.isRebel = true;
+      }
+    }
+  }
+  // Faith contagion (heresy spreads from low-faith carriers)
+  if (from.faith < RUMOR_HERETIC_FAITH_THRESHOLD && to.faith >= RUMOR_HERETIC_FAITH_THRESHOLD) {
+    to.faith = Math.max(0, to.faith - RUMOR_HERETIC_FAITH_LOSS);
   }
 }
 

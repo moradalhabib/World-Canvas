@@ -1,0 +1,39 @@
+Phase 16: The Living World & VFX Overhaul
+Acknowledge this prompt. We must now extend the high-fidelity isometric visual standard established in Phase 15 to the entire environment, ecosystem, and divine interactions. The world must feel alive, dynamic, and visually cohesive.
+
+1. Terrain & Animated Environments:
+
+Water Dynamics: Water can no longer be a static blue tile. Implement a 3-frame subtle wave animation cycle for water tiles. Add a lighter "foam" edge where water meets land tiles.
+
+Elevation & Mountains: Introduce verticality. Draw rugged, gray stone cliff faces for tiles that represent elevation changes or map borders.
+
+Seasonal Terrain (Snow & Grass): Wire the terrain colors to the Season state. Grass should be lush green in Spring/Summer, brown/orange in Autumn, and seamlessly transition to a white/light blue snow texture in Winter.
+
+2. Fauna & Ecosystem (Animals):
+
+Livestock & Wild Animals: Introduce basic animal entities to the grid (Sheep, Wolf/Bear).
+
+Animal Sprites: Render them using the same multi-directional sprite logic as NPCs.
+
+Behavior: Sheep wander idly and eat grass. Wolves spawn near map edges and will pathfind to hunt sheep or isolated NPCs.
+
+3. Divine VFX & God Powers:
+
+God actions cannot just be silent math updates. Implement high-impact visual effects (VFX) on the canvas when powers are used.
+
+Wrath (Smite): Render a jagged, bright white/blue lightning bolt striking the target tile, accompanied by a 0.5-second screen shake effect and a brief white screen flash.
+
+Bless/Heal: Render a warm, golden shaft of light illuminating the target tile, with golden particles floating upward.
+
+Time Alteration: When time is sped up, add a subtle vignette (darkened edges) to the screen to indicate fast-forwarding.
+
+4. Weather Particle Engine Polish:
+
+Ensure the rain and snow particle systems (from Phase 13) cast subtle shadows and obey the z-index so they fall in front of buildings and NPCs, but don't clip through the UI.
+
+During thunderstorms, the ambient lighting of the entire canvas should darken significantly to make the Tavern/House window lights pop.
+
+Instruction: Confirm understanding. This is a massive visual update. You must prioritize rendering efficiency. Batch your canvas drawing calls where possible so the water animations and particle effects do not drop the mobile framerate below 60 FPS. Provide the updated engine code.
+
+The Reality Check on Game Art:
+Just like with the buildings, the Agent will build the engine to handle this (it will make the water animate, it will make the lightning strike, it will make the snow accumulate).

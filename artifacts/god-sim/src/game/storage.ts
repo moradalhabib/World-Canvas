@@ -23,8 +23,11 @@ const SAVE_KEY = "god_sim_state";
  *       within 4 months because starting state has bread:8/wheat:0/no farms.
  *       v8 also zeros civ.needs.hunger.value, tops up the bread reserve, and
  *       recenters the camera on spawn so off-screen NPCs become visible again.
+ *  v9: + Phase 12 Societal Fabric Engine — adds lastName/mood/dissent fields
+ *       on every citizen plus MENTAL_BREAK + CHATTING states. normalizeCitizens
+ *       backfills the new fields; no other state mutations needed.
  */
-const CURRENT_VERSION = 8;
+const CURRENT_VERSION = 9;
 const INITIAL_CITIZEN_COUNT = 6;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;
@@ -214,7 +217,8 @@ export function loadState(): GameState | null {
       s.version !== 4 &&
       s.version !== 5 &&
       s.version !== 6 &&
-      s.version !== 7
+      s.version !== 7 &&
+      s.version !== 8
     ) {
       return null;
     }
@@ -226,6 +230,7 @@ export function loadState(): GameState | null {
     let citizens: Citizen[];
     if (
       (s.version === CURRENT_VERSION ||
+        s.version === 8 ||
         s.version === 7 ||
         s.version === 6 ||
         s.version === 5 ||

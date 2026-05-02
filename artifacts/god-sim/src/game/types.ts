@@ -246,7 +246,11 @@ export type CitizenState =
   | "REBEL"
   | "COMBAT"
   /** Phase 9: Coward Guard breaks combat and pathfinds away. */
-  | "FLEEING";
+  | "FLEEING"
+  /** Phase 12: NPC has snapped from mood == 0 (see breakKind). */
+  | "MENTAL_BREAK"
+  /** Phase 12: NPC is mid-rumor-exchange with chatPartnerId (see chatUntilMs). */
+  | "CHATTING";
 
 /** Phase 9: Permanent behavioral trait assigned at spawn. */
 export type CitizenTrait = "Zealot" | "Greedy" | "Coward" | "Diligent";
@@ -354,6 +358,23 @@ export interface Citizen {
    * Stored as a plain object so per-frame lookups are O(1).
    */
   memory?: Record<string, number>;
+
+  /* -- Phase 12: Societal Fabric Engine (Genetics, Psychology, Contagion) -- */
+  /** Family / dynasty surname (e.g. "Baker"). Inherited from mother on birth. */
+  lastName?: string;
+  /** 0..100 mental wellbeing. Hunger / homelessness drain it; mastery buffs it.
+   *  At 0 the NPC enters MENTAL_BREAK with a trait-driven sub-behavior. */
+  mood?: number;
+  /** Sub-kind of the active MENTAL_BREAK — drives behavior + UI overlay. */
+  breakKind?: "DOOMSAYER" | "RECLUSE" | "THIEF";
+  /** RECLUSE: absolute (year * 12 + month) at which the recluse exits the house. */
+  breakUntilMonth?: number;
+  /** CHATTING: epoch-style state.time.totalRealMs at which the chat ends. */
+  chatUntilMs?: number;
+  /** CHATTING: id of the symmetric chat partner (also in CHATTING state). */
+  chatPartnerId?: string;
+  /** Per-citizen rebellion contagion meter (0..100). Spreads via rumor mill. */
+  dissent?: number;
 }
 
 /* ── Phase 3B: Chronicle entries ── */
