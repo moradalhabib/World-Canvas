@@ -1,5 +1,6 @@
 import type {
   Building,
+  ChronicleEntry,
   Citizen,
   CivilizationState,
   GameState,
@@ -8,10 +9,12 @@ import type {
 } from "./types";
 import { createDefaultCivilization } from "./civilization";
 import { normalizeCitizens, spawnInitialCitizens } from "./npc";
+import { anointInitialKing, loadChronicle } from "./royalty";
 
 const SAVE_KEY = "god_sim_state";
-/** v1: terrain only. v2: + buildings + civilization. v3: + citizens. */
-const CURRENT_VERSION = 3;
+/** v1: terrain only. v2: + buildings + civilization. v3: + citizens.
+ *  v4: + royal succession (nobleDissent, chronicle, lineage fields). */
+const CURRENT_VERSION = 4;
 const INITIAL_CITIZEN_COUNT = 3;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;

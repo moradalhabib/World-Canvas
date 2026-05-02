@@ -1,0 +1,40 @@
+Phase 6: The Lifecycle & Resolution Engine (Final NPC Architecture)
+Acknowledge this prompt. We are finalizing the NPC Utility Brain and global systems. Append the following logic without breaking existing God Powers, Pathfinding, or Factions.
+
+1. Generational Time & Aging:
+
+Add an age variable to the Citizen class. 12 game-months = 1 year.
+
+Life Stages:
+
+Age < 18: 'Child' (Smaller sprite, cannot work professions, wanders near spawn/home).
+
+Age 18-60: 'Adult' (Normal behavior, assigned professions).
+
+Age > 60: 'Elder' (Movement speed reduced by 30%).
+
+Age > 75: Introduce a random chance of natural death() each tick.
+
+2. Civilian Population Growth:
+
+Implement an ambient breeding mechanic. If the global Food supply is high and there are empty 'Residential' buildings, two adult NPCs have a small chance to spawn a new 'Child' NPC each year, keeping the workforce alive.
+
+3. The Night Cycle & Safety Stat:
+
+Implement a global Day/Night cycle (e.g., 1 month day, 1 month night for pacing). During Night, apply a dark semi-transparent overlay to the canvas.
+
+Sleep Protocol: At Night, all non-guard NPCs enter a SLEEPING state. They must pathfind to the nearest 'Residential' building.
+
+Homeless Penalty: If an NPC cannot reach a building by midnight, they sleep outside. Their Safety stat drops drastically, increasing their chance of turning ROGUE.
+
+4. Faction Win Conditions (The Dynasty Shift):
+
+If the simulation is in a state of globalDissent (Civil War) and the isKing or isDowagerQueen NPC is killed by a Rebel:
+
+The Rebel NPC with the highest Vanity (Gold) is immediately elevated. They lose their Rebel flag, gain the isKing flag, get the Crown sprite, and globalDissent resets to zero. A new dynasty has begun.
+
+Log this event in the Chronicles UI.
+
+Instruction: Confirm understanding. Provide the updated JavaScript logic to finalize the NPC lifecycles and the Day/Night visual rendering.
+
+Once the Replit Agent applies this, your NPCs are officially "finished." You will see children running around, elders moving slowly, the town going to sleep at night, and—if a rebellion succeeds—a peasant or noble physically taking the crown for themselves.
