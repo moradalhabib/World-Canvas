@@ -1,5 +1,11 @@
-import { TILE_COLORS, TILE_BORDER_COLORS } from "./types";
-import type { GameState, Camera } from "./types";
+import {
+  TILE_COLORS,
+  TILE_BORDER_COLORS,
+  TILE_SPECKLE_COLORS,
+  SPECKLE_DENSITY,
+  getTransitionColor,
+} from "./types";
+import type { GameState, TileType } from "./types";
 import {
   createDefaultState,
   saveState,
@@ -37,6 +43,14 @@ export class GameEngine {
 
   private resizeObserver: ResizeObserver;
 
+  private biomePatterns = new Map<TileType, CanvasPattern>();
+  private waterHighlight: HTMLCanvasElement | null = null;
+  private vignetteGradient: CanvasGradient | null = null;
+  private vignetteSize = { w: 0, h: 0 };
+  private waterAnimPhase = 0;
+  /** Pre-baked edge fade strips, keyed by `${color}|${dir}` where dir is t/b/l/r. */
+  private transitionStrips = new Map<string, HTMLCanvasElement>();
+
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
@@ -54,9 +68,135 @@ export class GameEngine {
     this.resizeObserver.observe(canvas.parentElement!);
     this.resize();
 
+    this.buildBiomePatterns();
+    this.buildWaterHighlight();
+
     this.bindTouchEvents();
     this.bindMouseEvents();
     this.start();
+  }
+
+  private buildBiomePatterns() {
+    const tileSize = this.state.grid.tileSize;
+    const types: TileType[] = [
+      "grass", "water", "forest", "mountain", "desert", "snow",
+    ];
+    for (const type of types) {
+      const off = document.createElement("canvas");
+      off.width = tileSize;
+      off.height = tileSize;
+      const p = off.getContext("2d")!;
+
+      p.fillStyle = TILE_COLORS[type];
+      p.fillRect(0, 0, tileSize, tileSize);
+
+      const [light, dark] = TILE_SPECKLE_COLORS[type];
+      const density = SPECKLE_DENSITY[type];
+
+      let seed = type.charCodeAt(0) * 9301 + 49297;
+      const rand = () => {
+        seed = (seed * 9301 + 49297) % 233280;
+        return seed / 233280;
+      };
+
+      for (let i = 0; i < density; i++) {
+        const x = rand() * tileSize;
+        const y = rand() * tileSize;
+        const r = 0.4 + rand() * 1.6;
+        const useLight = rand() > 0.5;
+        const alpha = 0.15 + rand() * 0.45;
+        p.globalAlpha = alpha;
+        p.fillStyle = useLight ? light : dark;
+        p.beginPath();
+        p.arc(x, y, r, 0, Math.PI * 2);
+        p.fill();
+      }
+      p.globalAlpha = 1;
+
+      const pat = this.ctx.createPattern(off, "repeat");
+      if (pat) this.biomePatterns.set(type, pat);
+    }
+  }
+
+  private hexToRgba(hex: string, alpha: number): string {
+    const h = hex.replace("#", "");
+    const full = h.length === 3
+      ? h.split("").map((c) => c + c).join("")
+      : h.padEnd(6, "0").slice(0, 6);
+    const r = parseInt(full.slice(0, 2), 16);
+    const g = parseInt(full.slice(2, 4), 16);
+    const b = parseInt(full.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  private getTransitionStrip(color: string, dir: "t" | "b" | "l" | "r"): HTMLCanvasElement {
+    const key = `${color}|${dir}`;
+    const cached = this.transitionStrips.get(key);
+    if (cached) return cached;
+
+    const ts = this.state.grid.tileSize;
+    const edge = Math.max(2, Math.round(ts * 0.18));
+    const horizontal = dir === "t" || dir === "b";
+    const off = document.createElement("canvas");
+    off.width = horizontal ? ts : edge;
+    off.height = horizontal ? edge : ts;
+    const p = off.getContext("2d")!;
+
+    const opaque = this.hexToRgba(color, 0.95);
+    const transparent = this.hexToRgba(color, 0);
+
+    let grd: CanvasGradient;
+    if (dir === "t") {
+      grd = p.createLinearGradient(0, 0, 0, edge);
+      grd.addColorStop(0, opaque);
+      grd.addColorStop(1, transparent);
+    } else if (dir === "b") {
+      grd = p.createLinearGradient(0, 0, 0, edge);
+      grd.addColorStop(0, transparent);
+      grd.addColorStop(1, opaque);
+    } else if (dir === "l") {
+      grd = p.createLinearGradient(0, 0, edge, 0);
+      grd.addColorStop(0, opaque);
+      grd.addColorStop(1, transparent);
+    } else {
+      grd = p.createLinearGradient(0, 0, edge, 0);
+      grd.addColorStop(0, transparent);
+      grd.addColorStop(1, opaque);
+    }
+    p.fillStyle = grd;
+    p.fillRect(0, 0, off.width, off.height);
+    this.transitionStrips.set(key, off);
+    return off;
+  }
+
+  private buildWaterHighlight() {
+    const ts = this.state.grid.tileSize;
+    const off = document.createElement("canvas");
+    off.width = ts;
+    off.height = ts;
+    const p = off.getContext("2d")!;
+    const grad = p.createRadialGradient(ts * 0.35, ts * 0.3, 0, ts * 0.5, ts * 0.5, ts * 0.7);
+    grad.addColorStop(0, "rgba(180, 220, 255, 0.18)");
+    grad.addColorStop(0.6, "rgba(180, 220, 255, 0.04)");
+    grad.addColorStop(1, "rgba(0, 0, 0, 0)");
+    p.fillStyle = grad;
+    p.fillRect(0, 0, ts, ts);
+    this.waterHighlight = off;
+  }
+
+  private buildVignette() {
+    const W = this.viewW;
+    const H = this.viewH;
+    if (this.vignetteGradient && this.vignetteSize.w === W && this.vignetteSize.h === H) return;
+    const grad = this.ctx.createRadialGradient(
+      W / 2, H / 2, Math.min(W, H) * 0.35,
+      W / 2, H / 2, Math.max(W, H) * 0.75
+    );
+    grad.addColorStop(0, "rgba(0, 0, 0, 0)");
+    grad.addColorStop(0.7, "rgba(0, 0, 0, 0.18)");
+    grad.addColorStop(1, "rgba(0, 0, 0, 0.55)");
+    this.vignetteGradient = grad;
+    this.vignetteSize = { w: W, h: H };
   }
 
   private resize() {
@@ -66,6 +206,7 @@ export class GameEngine {
     this.canvas.style.width = parent.clientWidth + "px";
     this.canvas.style.height = parent.clientHeight + "px";
     this.ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    this.vignetteGradient = null;
     this.clampCamera();
   }
 
@@ -107,44 +248,50 @@ export class GameEngine {
     el.addEventListener("touchcancel", this.onTouchEnd, { passive: false });
   }
 
+  private mouseDown = false;
+  private mouseLastX = 0;
+  private mouseLastY = 0;
+
+  private onMouseDown = (e: MouseEvent) => {
+    this.mouseDown = true;
+    this.mouseLastX = e.clientX;
+    this.mouseLastY = e.clientY;
+    this.panVelX = 0;
+    this.panVelY = 0;
+  };
+
+  private onMouseMove = (e: MouseEvent) => {
+    if (!this.mouseDown) return;
+    const dx = e.clientX - this.mouseLastX;
+    const dy = e.clientY - this.mouseLastY;
+    this.panVelX = -dx / this.state.camera.zoom;
+    this.panVelY = -dy / this.state.camera.zoom;
+    this.state.camera.x += this.panVelX;
+    this.state.camera.y += this.panVelY;
+    this.clampCamera();
+    this.mouseLastX = e.clientX;
+    this.mouseLastY = e.clientY;
+  };
+
+  private onMouseUp = () => { this.mouseDown = false; };
+  private onMouseLeave = () => { this.mouseDown = false; };
+
+  private onWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    const rect = this.canvas.getBoundingClientRect();
+    const focusX = (e.clientX - rect.left) / this.state.camera.zoom + this.state.camera.x;
+    const focusY = (e.clientY - rect.top) / this.state.camera.zoom + this.state.camera.y;
+    this.applyZoom(factor, focusX, focusY);
+  };
+
   private bindMouseEvents() {
     const el = this.canvas;
-    let mouseDown = false;
-    let lastX = 0;
-    let lastY = 0;
-
-    el.addEventListener("mousedown", (e) => {
-      mouseDown = true;
-      lastX = e.clientX;
-      lastY = e.clientY;
-      this.panVelX = 0;
-      this.panVelY = 0;
-    });
-
-    el.addEventListener("mousemove", (e) => {
-      if (!mouseDown) return;
-      const dx = e.clientX - lastX;
-      const dy = e.clientY - lastY;
-      this.panVelX = -dx / this.state.camera.zoom;
-      this.panVelY = -dy / this.state.camera.zoom;
-      this.state.camera.x += this.panVelX;
-      this.state.camera.y += this.panVelY;
-      this.clampCamera();
-      lastX = e.clientX;
-      lastY = e.clientY;
-    });
-
-    el.addEventListener("mouseup", () => { mouseDown = false; });
-    el.addEventListener("mouseleave", () => { mouseDown = false; });
-
-    el.addEventListener("wheel", (e) => {
-      e.preventDefault();
-      const factor = e.deltaY > 0 ? 0.9 : 1.1;
-      const rect = el.getBoundingClientRect();
-      const focusX = (e.clientX - rect.left) / this.state.camera.zoom + this.state.camera.x;
-      const focusY = (e.clientY - rect.top) / this.state.camera.zoom + this.state.camera.y;
-      this.applyZoom(factor, focusX, focusY);
-    }, { passive: false });
+    el.addEventListener("mousedown", this.onMouseDown);
+    el.addEventListener("mousemove", this.onMouseMove);
+    el.addEventListener("mouseup", this.onMouseUp);
+    el.addEventListener("mouseleave", this.onMouseLeave);
+    el.addEventListener("wheel", this.onWheel, { passive: false });
   }
 
   private onTouchStart = (e: TouchEvent) => {
@@ -281,7 +428,8 @@ export class GameEngine {
     const W = this.viewW;
     const H = this.viewH;
 
-    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "#0d1117";
+    ctx.fillRect(0, 0, W, H);
 
     ctx.save();
     ctx.scale(cam.zoom, cam.zoom);
@@ -298,40 +446,99 @@ export class GameEngine {
       Math.ceil((cam.y + H / cam.zoom) / ts)
     );
 
+    const useTextures = cam.zoom > 0.35;
+    const edgeWidth = Math.max(2, ts * 0.18);
+
+    // Pass 1: base tile fills (with cached texture patterns)
     for (let r = startRow; r <= endRow; r++) {
       for (let c = startCol; c <= endCol; c++) {
         const tile = grid.tiles[r][c];
         const px = c * ts;
         const py = r * ts;
 
-        ctx.fillStyle = TILE_COLORS[tile.type];
-        ctx.fillRect(px, py, ts, ts);
+        if (useTextures) {
+          const pat = this.biomePatterns.get(tile.type);
+          if (pat) {
+            ctx.fillStyle = pat;
+            ctx.save();
+            ctx.translate(px, py);
+            ctx.fillRect(0, 0, ts, ts);
+            ctx.restore();
+          } else {
+            ctx.fillStyle = TILE_COLORS[tile.type];
+            ctx.fillRect(px, py, ts, ts);
+          }
+        } else {
+          ctx.fillStyle = TILE_COLORS[tile.type];
+          ctx.fillRect(px, py, ts, ts);
+        }
+      }
+    }
 
-        if (cam.zoom > 0.5) {
-          ctx.strokeStyle = TILE_BORDER_COLORS[tile.type];
-          ctx.lineWidth = cam.zoom > 1 ? 0.5 : 0.25;
-          ctx.strokeRect(px + 0.5, py + 0.5, ts - 1, ts - 1);
+    // Pass 2: auto-tile biome transitions (uses pre-baked cached strips)
+    if (cam.zoom > 0.4) {
+      for (let r = startRow; r <= endRow; r++) {
+        for (let c = startCol; c <= endCol; c++) {
+          const tile = grid.tiles[r][c];
+          const px = c * ts;
+          const py = r * ts;
+
+          if (r > 0) {
+            const n = grid.tiles[r - 1][c];
+            const tc = getTransitionColor(tile.type, n.type);
+            if (tc) ctx.drawImage(this.getTransitionStrip(tc, "t"), px, py);
+          }
+          if (r < grid.rows - 1) {
+            const n = grid.tiles[r + 1][c];
+            const tc = getTransitionColor(tile.type, n.type);
+            if (tc) ctx.drawImage(this.getTransitionStrip(tc, "b"), px, py + ts - edgeWidth);
+          }
+          if (c > 0) {
+            const n = grid.tiles[r][c - 1];
+            const tc = getTransitionColor(tile.type, n.type);
+            if (tc) ctx.drawImage(this.getTransitionStrip(tc, "l"), px, py);
+          }
+          if (c < grid.cols - 1) {
+            const n = grid.tiles[r][c + 1];
+            const tc = getTransitionColor(tile.type, n.type);
+            if (tc) ctx.drawImage(this.getTransitionStrip(tc, "r"), px + ts - edgeWidth, py);
+          }
+        }
+      }
+    }
+
+    // Pass 3: water bloom highlight
+    if (this.waterHighlight && cam.zoom > 0.5) {
+      ctx.globalCompositeOperation = "lighter";
+      for (let r = startRow; r <= endRow; r++) {
+        for (let c = startCol; c <= endCol; c++) {
+          if (grid.tiles[r][c].type !== "water") continue;
+          ctx.drawImage(this.waterHighlight, c * ts, r * ts);
+        }
+      }
+      ctx.globalCompositeOperation = "source-over";
+    }
+
+    // Pass 4: subtle tile borders for definition (only when zoomed in)
+    if (cam.zoom > 1.2) {
+      ctx.lineWidth = 0.5 / cam.zoom;
+      for (let r = startRow; r <= endRow; r++) {
+        for (let c = startCol; c <= endCol; c++) {
+          const tile = grid.tiles[r][c];
+          ctx.strokeStyle = TILE_BORDER_COLORS[tile.type] + "40";
+          ctx.strokeRect(c * ts, r * ts, ts, ts);
         }
       }
     }
 
     ctx.restore();
 
-    this.renderDebugOverlay();
-  }
-
-  private renderDebugOverlay() {
-    const ctx = this.ctx;
-    const cam = this.state.camera;
-    ctx.font = "12px monospace";
-    ctx.fillStyle = "rgba(0,0,0,0.5)";
-    ctx.fillRect(8, 8, 200, 22);
-    ctx.fillStyle = "#fff";
-    ctx.fillText(
-      `zoom:${cam.zoom.toFixed(2)} x:${cam.x.toFixed(0)} y:${cam.y.toFixed(0)}`,
-      14,
-      23
-    );
+    // Pass 5: vignette overlay
+    this.buildVignette();
+    if (this.vignetteGradient) {
+      ctx.fillStyle = this.vignetteGradient;
+      ctx.fillRect(0, 0, W, H);
+    }
   }
 
   public setTimeScale(scale: 0 | 1 | 2) {
@@ -355,5 +562,10 @@ export class GameEngine {
     el.removeEventListener("touchmove", this.onTouchMove);
     el.removeEventListener("touchend", this.onTouchEnd);
     el.removeEventListener("touchcancel", this.onTouchEnd);
+    el.removeEventListener("mousedown", this.onMouseDown);
+    el.removeEventListener("mousemove", this.onMouseMove);
+    el.removeEventListener("mouseup", this.onMouseUp);
+    el.removeEventListener("mouseleave", this.onMouseLeave);
+    el.removeEventListener("wheel", this.onWheel);
   }
 }
