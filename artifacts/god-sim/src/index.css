@@ -156,22 +156,28 @@ body {
 }
 
 /* ── HUD: left (needs panel) ── */
+/* Phase 17b: scaled to 60% (40% reduction) and pinned to middle-left edge.
+   `transform-origin: left center` keeps the panel anchored against the
+   left margin while shrinking, instead of drifting toward the center. */
 .hud-needs {
   position: absolute;
-  left: 12px;
+  left: 8px;
   top: 50%;
-  transform: translateY(-50%);
+  transform: translateY(-50%) scale(0.6);
+  transform-origin: left center;
   width: 184px;
-  /* Phase 15: dark wood + double gold border, looks like an inlaid plaque. */
-  background:
-    linear-gradient(180deg, var(--royal-charcoal-2) 0%, var(--royal-charcoal-3) 100%);
+  /* Phase 17b: transparent dark glass so the world stays visible through
+     the panel — was opaque charcoal gradient (Phase 15). Gold border kept
+     for the Dark Royal identity. */
+  background: rgba(20, 20, 20, 0.5);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
   border: 1px solid var(--royal-gold);
   border-radius: 6px;
   padding: 12px 14px 10px;
   box-shadow:
-    0 6px 24px rgba(0, 0, 0, 0.6),
-    inset 0 0 0 1px rgba(244, 207, 91, 0.18),
-    inset 0 0 12px rgba(0, 0, 0, 0.5);
+    0 6px 24px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(244, 207, 91, 0.18);
   pointer-events: none;
 }
 /* Phase 15: ornate corner flourishes (gold corner brackets). */
@@ -590,30 +596,32 @@ body {
 /* Phase 15 "Dark Royal" — Royal Chronicle parchment scroll            */
 /* ─────────────────────────────────────────────────────────────────── */
 
+/* Phase 17b: relocated from top-right to BOTTOM-right corner (above the
+   time controls) and shrunk to ~20% viewport width. Background flipped
+   from opaque parchment to dark transparent glass so the world is
+   visible through the menu. Text colors flipped to light-on-dark. */
 .royal-chronicle {
   position: absolute;
-  top: 92px;
+  bottom: 80px;
   right: 14px;
-  width: 280px;
-  max-height: 280px;
+  width: 20vw;
+  min-width: 200px;
+  max-width: 280px;
+  max-height: 200px;
   overflow-y: auto;
-  /* Aged parchment with subtle vertical fiber gradient. */
-  background:
-    radial-gradient(ellipse at top,    rgba(160, 120, 60, 0.15) 0%, transparent 70%),
-    radial-gradient(ellipse at bottom, rgba(120,  80, 40, 0.20) 0%, transparent 70%),
-    linear-gradient(180deg, #d8bf91 0%, #c8a878 50%, #b89860 100%);
-  /* Two-layer border: outer dark wood frame + inner gold inlay. */
-  border: 3px solid var(--royal-charcoal);
+  background: rgba(20, 20, 20, 0.5);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  border: 1px solid var(--royal-gold);
   border-radius: 4px;
-  padding: 14px 16px 14px;
-  color: var(--royal-ink);
+  padding: 10px 12px 10px;
+  color: var(--royal-parchment);
   font-family: "Cormorant Garamond", "EB Garamond", Georgia, serif;
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 1.4;
   box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.7),
-    inset 0 0 0 1px var(--royal-gold),
-    inset 0 0 30px rgba(120, 80, 40, 0.35);
+    0 6px 24px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(244, 207, 91, 0.18);
 }
 .royal-chronicle::-webkit-scrollbar { width: 6px; }
 .royal-chronicle::-webkit-scrollbar-thumb { background: var(--royal-gold-dim); border-radius: 3px; }
@@ -621,38 +629,38 @@ body {
 
 .chronicle-title {
   font-family: "Cinzel", Georgia, serif;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 2.2px;
-  color: var(--royal-charcoal);
-  margin-bottom: 10px;
+  letter-spacing: 2px;
+  color: var(--royal-gold-bright);
+  margin-bottom: 8px;
   text-align: center;
   font-variant: small-caps;
-  padding-bottom: 6px;
-  border-bottom: 1px solid rgba(60, 40, 20, 0.45);
-  text-shadow: 0 1px 0 rgba(255, 240, 200, 0.6);
+  padding-bottom: 5px;
+  border-bottom: 1px solid rgba(244, 207, 91, 0.28);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
 
 .chronicle-entry {
-  margin-bottom: 9px;
+  margin-bottom: 7px;
   display: flex;
-  gap: 8px;
+  gap: 7px;
   align-items: baseline;
 }
 
 .chronicle-year {
   flex-shrink: 0;
   font-family: "Cinzel", Georgia, serif;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 1px;
-  color: rgba(60, 40, 20, 0.7);
+  color: var(--royal-gold-dim);
   font-variant: small-caps;
-  min-width: 28px;
+  min-width: 22px;
 }
 
 .chronicle-text {
   flex: 1;
-  color: var(--royal-ink);
+  color: var(--royal-parchment);
   font-style: italic;
 }
