@@ -60,6 +60,11 @@ export class GameEngine {
   /** Pre-baked edge fade strips, keyed by `${color}|${dir}` where dir is t/b/l/r. */
   private transitionStrips = new Map<string, HTMLCanvasElement>();
 
+  /** Pre-rendered humanoid sprites per social tier, keyed by tier name.
+   *  Stamped in renderCitizens; rebuilt when tile size changes. */
+  private npcSprites = new Map<string, HTMLCanvasElement>();
+  private npcSpriteTileSize = 0;
+
   /** Hidden land-value map driving social hierarchy. */
   private desirability!: DesirabilityMap;
   /** Months between full desirability recomputes (it's also marked dirty on builds). */
