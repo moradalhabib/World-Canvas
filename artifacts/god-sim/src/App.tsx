@@ -598,54 +598,18 @@ export default function App() {
         </div>
       )}
 
-      {/* Right: Chronicle panel */}
+      {/* Right: Royal Chronicle parchment scroll (Phase 15 Dark Royal theme) */}
       {chronicle.length > 0 && (
-        <div
-          className="hud-chronicle"
-          style={{
-            position: "absolute",
-            top: 80,
-            right: 12,
-            width: 260,
-            maxHeight: 240,
-            overflowY: "auto",
-            background: "rgba(10, 14, 28, 0.85)",
-            border: "1px solid rgba(180, 160, 100, 0.35)",
-            borderRadius: 6,
-            padding: "10px 12px",
-            color: "#e8d8a8",
-            fontSize: 12,
-            fontFamily: "Georgia, serif",
-            backdropFilter: "blur(4px)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: 1.5,
-              color: "#f4cf5b",
-              marginBottom: 8,
-              textTransform: "uppercase",
-              borderBottom: "1px solid rgba(180, 160, 100, 0.25)",
-              paddingBottom: 4,
-            }}
-          >
-            ✦ Royal Chronicle
-          </div>
+        <div className="royal-chronicle">
+          <div className="chronicle-title">✦ Royal Chronicle ✦</div>
           {chronicle.map((e, i) => (
             <div
               key={`${e.year}-${e.month}-${i}`}
-              style={{
-                marginBottom: 8,
-                lineHeight: 1.35,
-                opacity: 1 - i * 0.12,
-              }}
+              className="chronicle-entry"
+              style={{ opacity: 1 - i * 0.10 }}
             >
-              <span style={{ color: "#a8a890", fontSize: 10, marginRight: 6 }}>
-                Y{e.year}
-              </span>
-              <span>{e.text}</span>
+              <span className="chronicle-year">Y{e.year}</span>
+              <span className="chronicle-text">{e.text}</span>
             </div>
           ))}
         </div>

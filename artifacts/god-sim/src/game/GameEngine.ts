@@ -1190,6 +1190,231 @@ export class GameEngine {
       ctx.lineTo(x2, y2);
       ctx.stroke();
     }
+
+    // Phase 15: Interior furniture stamps — visible whenever the roof
+    // fades to 0.25α (any NPC on the building tile). Drawn on the FLOOR
+    // layer so they sit BEHIND the citizen sprite (sortKey -0.10 vs
+    // citizen sortKey +0.01) but inside the back-wall (sortKey -0.05),
+    // giving the dollhouse cutaway a furnished interior. Each layout is
+    // axis-aligned to the iso diamond and clipped to ~70% of the floor
+    // footprint so it stays clear of the back/right walls.
+    this.drawInteriorFurniture(ctx, b, def, cx, groundY, fw, fh);
+  }
+
+  /**
+   * Phase 15: Per-building-type furniture stamp. Drawn into the floor
+   * diamond after the planks. Cheap (just rects + ellipses, no images).
+   * Variants:
+   *   - residential: bed (with pillow) + small wooden table
+   *   - house_high:  ornate bed + table with goblet (gold accents)
+   *   - tavern:      bar counter + stool + barrel
+   *   - apothecary:  potion shelves with green/red/blue vials
+   *   - dungeon:     iron-bar grate + straw pile
+   *   - production farm/mill: grain sacks + flour barrel
+   *   - production mine: ore pile + pickaxe rest
+   *   - production lumber: log stack
+   *   - service church: pew + altar
+   *   - service medical: cot + apothecary cabinet
+   *   - service generic: simple bench
+   */
+  private drawInteriorFurniture(
+    ctx: CanvasRenderingContext2D,
+    b: Building,
+    def: ReturnType<typeof getBuildingDef>,
+    cx: number, groundY: number, fw: number, fh: number,
+  ) {
+    // Position helpers — left third / center / right third of the floor.
+    const leftX = cx - fw * 0.22;
+    const rightX = cx + fw * 0.22;
+    const backY = groundY - fh * 0.18;
+    const frontY = groundY + fh * 0.10;
+
+    const t = b.typeId;
+    const cat = def.category;
+
+    // Helper: a small wooden table (top + 2 visible legs).
+    const drawTable = (tx: number, ty: number, w: number, h: number, ornate = false) => {
+      ctx.fillStyle = "#6b4a28";
+      ctx.fillRect(tx - w / 2, ty - h * 0.15, w, h * 0.18);
+      ctx.fillStyle = "#4a3018";
+      ctx.fillRect(tx - w / 2 + 1, ty + h * 0.03, 2, h * 0.30);
+      ctx.fillRect(tx + w / 2 - 3, ty + h * 0.03, 2, h * 0.30);
+      ctx.strokeStyle = "rgba(0,0,0,0.5)";
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(tx - w / 2, ty - h * 0.15, w, h * 0.18);
+      if (ornate) {
+        // Gold goblet on the table
+        ctx.fillStyle = "#d4af37";
+        ctx.fillRect(tx - 1.5, ty - h * 0.30, 3, h * 0.18);
+      }
+    };
+
+    // Helper: a bed with a darker frame, lighter mattress, and pillow.
+    const drawBed = (bx: number, by: number, w: number, h: number, ornate = false) => {
+      // Frame
+      ctx.fillStyle = ornate ? "#5a3a1a" : "#4a3018";
+      ctx.fillRect(bx - w / 2, by - h / 2, w, h);
+      // Mattress
+      ctx.fillStyle = ornate ? "#e0c890" : "#c8b48e";
+      ctx.fillRect(bx - w / 2 + 2, by - h / 2 + 1.5, w - 4, h - 3);
+      // Pillow at the head (top-left quadrant)
+      ctx.fillStyle = "#f5efde";
+      ctx.fillRect(bx - w / 2 + 3, by - h / 2 + 2.5, w * 0.32, h * 0.30);
+      ctx.strokeStyle = "rgba(0,0,0,0.45)";
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(bx - w / 2, by - h / 2, w, h);
+      if (ornate) {
+        // Gold trim along the foot of the bed
+        ctx.fillStyle = "#d4af37";
+        ctx.fillRect(bx - w / 2, by + h / 2 - 1.5, w, 1.2);
+      }
+    };
+
+    // Compact shelf with three colored vials.
+    const drawShelf = (sx: number, sy: number, w: number, h: number) => {
+      ctx.fillStyle = "#5a3a1c";
+      ctx.fillRect(sx - w / 2, sy - h * 0.35, w, h * 0.10);  // top shelf board
+      ctx.fillRect(sx - w / 2, sy + h * 0.15, w, h * 0.10);  // bottom shelf board
+      const colors = ["#7fc97f", "#ef5e5e", "#5e8eef"];
+      for (let i = 0; i < 3; i++) {
+        ctx.fillStyle = colors[i];
+        const vx = sx - w / 2 + 2 + i * (w / 3);
+        ctx.fillRect(vx, sy - h * 0.30, 2.2, h * 0.18);
+        ctx.fillRect(vx, sy + h * 0.20, 2.2, h * 0.18);
+      }
+    };
+
+    if (cat === "residential") {
+      // house_high gets gold accents (ornate=true); house_free/house_middle plain.
+      const ornate = t === "house_high";
+      drawBed(leftX, frontY + fh * 0.05, fw * 0.28, fh * 0.32, ornate);
+      drawTable(rightX, backY + fh * 0.10, fw * 0.20, fh * 0.40, ornate);
+    } else if (t === "tavern") {
+      // Bar counter along the back-right
+      ctx.fillStyle = "#6b4a28";
+      ctx.fillRect(cx - fw * 0.05, backY - fh * 0.05, fw * 0.40, fh * 0.18);
+      ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.lineWidth = 0.6;
+      ctx.strokeRect(cx - fw * 0.05, backY - fh * 0.05, fw * 0.40, fh * 0.18);
+      // Three mug circles on the bar
+      ctx.fillStyle = "#caa15a";
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.arc(cx + fw * 0.02 + i * fw * 0.10, backY + fh * 0.02, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Barrel on the front-left
+      ctx.fillStyle = "#7a5028";
+      ctx.beginPath();
+      ctx.ellipse(leftX, frontY + fh * 0.08, fw * 0.07, fh * 0.16, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.lineWidth = 0.7;
+      ctx.stroke();
+      // Two iron bands on the barrel
+      ctx.strokeStyle = "rgba(0,0,0,0.7)";
+      ctx.beginPath(); ctx.ellipse(leftX, frontY + fh * 0.04, fw * 0.07, fh * 0.04, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(leftX, frontY + fh * 0.12, fw * 0.07, fh * 0.04, 0, 0, Math.PI * 2); ctx.stroke();
+    } else if (t === "apothecary") {
+      drawShelf(leftX, backY + fh * 0.05, fw * 0.32, fh * 0.42);
+      drawShelf(rightX, backY + fh * 0.05, fw * 0.32, fh * 0.42);
+      // Mortar + pestle in the center foreground
+      ctx.fillStyle = "#a89070";
+      ctx.beginPath();
+      ctx.ellipse(cx, frontY + fh * 0.05, fw * 0.06, fh * 0.10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#5a4830";
+      ctx.fillRect(cx + fw * 0.03, frontY - fh * 0.02, 1.5, fh * 0.18);
+    } else if (t === "dungeon") {
+      // Iron-bar window grate at the back
+      ctx.strokeStyle = "#3a3a3a";
+      ctx.lineWidth = 1.2;
+      const barW = fw * 0.30;
+      const barH = fh * 0.20;
+      const barX = cx - barW / 2;
+      const barY = backY - fh * 0.05;
+      ctx.strokeRect(barX, barY, barW, barH);
+      for (let i = 1; i < 4; i++) {
+        ctx.beginPath();
+        ctx.moveTo(barX + (barW * i) / 4, barY);
+        ctx.lineTo(barX + (barW * i) / 4, barY + barH);
+        ctx.stroke();
+      }
+      // Straw pile in the front
+      ctx.fillStyle = "#c8a050";
+      for (let i = 0; i < 6; i++) {
+        const angle = i * 0.4;
+        const sx = leftX + Math.cos(angle) * fw * 0.05;
+        const sy = frontY + Math.sin(angle) * fh * 0.06;
+        ctx.fillRect(sx, sy, 4, 1);
+      }
+      // Manacles (small iron ring) on the right
+      ctx.strokeStyle = "#2a2a2a"; ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(rightX, frontY, fw * 0.04, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (cat === "production") {
+      if (t === "farm" || t === "bakery") {
+        // Stack of three grain sacks
+        for (let i = 0; i < 3; i++) {
+          ctx.fillStyle = i === 1 ? "#caa15a" : "#b8945a";
+          ctx.beginPath();
+          ctx.ellipse(leftX + (i - 1) * fw * 0.06, frontY + fh * 0.04, fw * 0.06, fh * 0.10, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.lineWidth = 0.5; ctx.stroke();
+        }
+        // Wheat sheaf in the back
+        ctx.strokeStyle = "#d4b860"; ctx.lineWidth = 1;
+        for (let i = 0; i < 4; i++) {
+          ctx.beginPath();
+          ctx.moveTo(rightX + (i - 1.5) * 2, backY + fh * 0.10);
+          ctx.lineTo(rightX + (i - 1.5) * 2, backY - fh * 0.05);
+          ctx.stroke();
+        }
+      } else if (t === "mine") {
+        // Pile of dark ore chunks
+        ctx.fillStyle = "#3a3a44";
+        for (let i = 0; i < 5; i++) {
+          ctx.beginPath();
+          ctx.arc(cx + (i - 2) * fw * 0.04, frontY + fh * 0.04 - (i % 2) * fh * 0.05, fw * 0.035, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // A tiny gleam
+        ctx.fillStyle = "#a8c8e8";
+        ctx.beginPath();
+        ctx.arc(cx + fw * 0.02, frontY - fh * 0.01, 1.2, 0, Math.PI * 2);
+        ctx.fill();
+        // Pickaxe leaning on the right wall
+        ctx.strokeStyle = "#6b4a28"; ctx.lineWidth = 1.3;
+        ctx.beginPath(); ctx.moveTo(rightX, backY); ctx.lineTo(rightX + fw * 0.05, backY + fh * 0.30); ctx.stroke();
+        ctx.fillStyle = "#9aa0ad";
+        ctx.fillRect(rightX - fw * 0.03, backY - fh * 0.04, fw * 0.10, 2);
+      } else if (t === "lumber_camp") {
+        // Log stack
+        ctx.fillStyle = "#7a5028";
+        for (let i = 0; i < 3; i++) {
+          ctx.beginPath();
+          ctx.ellipse(cx, frontY + fh * 0.05 - i * fh * 0.07, fw * 0.18, fh * 0.05, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.lineWidth = 0.5; ctx.stroke();
+          // Tree-ring marks on the left end
+          ctx.strokeStyle = "#4a2818"; ctx.lineWidth = 0.6;
+          ctx.beginPath();
+          ctx.arc(cx - fw * 0.18, frontY + fh * 0.05 - i * fh * 0.07, fh * 0.025, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+    } else if (cat === "service") {
+      // Phase 14 service buildings: well (handled by legacy combined draw,
+      // returned early), dungeon, apothecary, tavern (all handled above).
+      // This generic-service fallback is a safety net for any future
+      // service building that doesn't have its own furniture branch yet.
+      {
+        // Generic service: a simple bench
+        ctx.fillStyle = "#6b4a28";
+        ctx.fillRect(cx - fw * 0.20, frontY + fh * 0.04, fw * 0.40, fh * 0.06);
+        ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.lineWidth = 0.5;
+        ctx.strokeRect(cx - fw * 0.20, frontY + fh * 0.04, fw * 0.40, fh * 0.06);
+      }
+    }
   }
 
   /**
@@ -2114,6 +2339,68 @@ export class GameEngine {
       }
     }
     c2.restore();
+
+    // Phase 15: King's royal cape — wider crimson drape behind body with
+    // gold trim and an ermine collar. Drawn on TOP of the body so it
+    // reads as a layered garment rather than just a tunic accent. Only
+    // applied to the actual king (not retired dowagers / queens) to keep
+    // his silhouette unmistakable.
+    if (c.isKing) {
+      const capeTopY = bodyTop - ts * 0.02;
+      const capeBotY = bodyTop + bodyH + ts * 0.04;
+      const capeWTop = bodyW * 0.55;
+      const capeWBot = bodyW * 1.30;
+      // Cape body (deep crimson with darker bottom)
+      const capeGrad = c2.createLinearGradient(0, capeTopY, 0, capeBotY);
+      capeGrad.addColorStop(0, "#8a1620");
+      capeGrad.addColorStop(1, "#3a0408");
+      c2.fillStyle = capeGrad;
+      c2.beginPath();
+      c2.moveTo(cx - capeWTop / 2, capeTopY);
+      c2.lineTo(cx + capeWTop / 2, capeTopY);
+      c2.lineTo(cx + capeWBot / 2, capeBotY);
+      c2.lineTo(cx - capeWBot / 2, capeBotY);
+      c2.closePath();
+      c2.fill();
+      c2.strokeStyle = "rgba(0,0,0,0.6)";
+      c2.lineWidth = Math.max(1, ts * 0.018);
+      c2.stroke();
+      // Gold trim down both edges
+      c2.strokeStyle = "#d4af37";
+      c2.lineWidth = Math.max(1.5, ts * 0.022);
+      c2.beginPath();
+      c2.moveTo(cx - capeWTop / 2 + 1, capeTopY);
+      c2.lineTo(cx - capeWBot / 2 + 1, capeBotY);
+      c2.moveTo(cx + capeWTop / 2 - 1, capeTopY);
+      c2.lineTo(cx + capeWBot / 2 - 1, capeBotY);
+      c2.stroke();
+      // Ermine collar (white fur band with black tail spots)
+      const collarH = ts * 0.07;
+      c2.fillStyle = "#f5efde";
+      c2.fillRect(cx - capeWTop / 2 - 2, capeTopY, capeWTop + 4, collarH);
+      c2.strokeStyle = "rgba(0,0,0,0.6)";
+      c2.lineWidth = 0.8;
+      c2.strokeRect(cx - capeWTop / 2 - 2, capeTopY, capeWTop + 4, collarH);
+      // Black ermine spots
+      c2.fillStyle = "#1a1a1a";
+      for (let i = 0; i < 5; i++) {
+        const ex = cx - capeWTop / 2 + 2 + i * (capeWTop / 4);
+        c2.fillRect(ex, capeTopY + collarH * 0.45, 1.5, 1.5);
+      }
+      // Re-draw body silhouette over the cape so the tunic stays visible
+      // (the cape drapes BEHIND the body but its top edge would otherwise
+      // cover the chest band — clip back to body shape here).
+      this.roundRect(c2, cx - bodyW / 2, bodyTop + collarH * 0.7, bodyW, bodyH - collarH * 0.7, ts * 0.07);
+      c2.fillStyle = grad;
+      c2.fill();
+      // Gold sash diagonal across the chest
+      c2.strokeStyle = "#d4af37";
+      c2.lineWidth = Math.max(2, ts * 0.04);
+      c2.beginPath();
+      c2.moveTo(cx - bodyW * 0.45, bodyTop + bodyH * 0.20);
+      c2.lineTo(cx + bodyW * 0.45, bodyTop + bodyH * 0.55);
+      c2.stroke();
+    }
 
     // Body outline
     this.roundRect(c2, cx - bodyW / 2, bodyTop, bodyW, bodyH, ts * 0.07);
@@ -3049,10 +3336,219 @@ export class GameEngine {
         g.strokeStyle = "rgba(0, 0, 0, 0.18)";
         g.lineWidth = 0.75;
         g.stroke();
+
+        // Phase 15: Procedural clutter pass — pebbles, wildflowers, and
+        // grass tufts scattered onto grass / forest / desert / snow tiles
+        // with a deterministic per-tile RNG so two adjacent screens never
+        // look identical, but the same tile renders the same scatter on
+        // every reload. Drawn ONCE into the cached terrainLayer, so the
+        // per-frame cost is exactly zero. Skipped entirely for water /
+        // mountain / crater (those biomes get their own visual texture).
+        if (tile.type === "grass" || tile.type === "forest" || tile.type === "desert" || tile.type === "snow") {
+          this.drawTerrainClutter(g, ts, tile.type, r, c);
+        }
+
         g.restore();
       }
     }
     this.terrainLayer = cv;
+  }
+
+  /**
+   * Phase 15: Procedural clutter for one tile. Uses a deterministic
+   * per-tile RNG (seeded from row/col) so the scatter is stable across
+   * reloads and never flickers. Called from inside rebuildTerrainLayer
+   * with the canvas already translated to the tile's iso center.
+   *
+   * Each tile gets up to ~3 small props chosen from a biome-aware pool:
+   *   - grass:  white/yellow flowers, pebbles, grass tufts
+   *   - forest: pine saplings, moss patches, larger pebbles
+   *   - desert: bleached rocks, sparse cacti dots
+   *   - snow:   small snow drifts, dark twigs
+   *
+   * All props stay strictly inside the tile's diamond footprint
+   * (|x|/(ts/2) + |y|/(ts/4) <= 0.85) so they never spill into
+   * neighboring tiles when the terrainLayer is blitted.
+   */
+  private drawTerrainClutter(
+    g: CanvasRenderingContext2D,
+    ts: number,
+    biome: TileType,
+    row: number,
+    col: number,
+  ) {
+    // Seeded mulberry32 — same tile coords always produce the same
+    // scatter, no flicker on terrain rebuilds (e.g. after a meteor).
+    let s = ((row * 73856093) ^ (col * 19349663)) >>> 0;
+    const rand = () => {
+      s = (s + 0x6D2B79F5) | 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+
+    // 0–3 props per tile. Probability tuned for "scattered, not crowded."
+    const propCount = rand() < 0.55 ? Math.floor(rand() * 3) + 1 : 0;
+    if (propCount === 0) return;
+
+    for (let i = 0; i < propCount; i++) {
+      // Sample inside the tile's diamond. Reject if outside.
+      let dx = 0, dy = 0, ok = false;
+      for (let tries = 0; tries < 6 && !ok; tries++) {
+        dx = (rand() * 2 - 1) * ts * 0.42;
+        dy = (rand() * 2 - 1) * ts * 0.21;
+        // Diamond test: |x| / (ts/2) + |y| / (ts/4) <= 0.85
+        if (Math.abs(dx) / (ts * 0.5) + Math.abs(dy) / (ts * 0.25) <= 0.82) ok = true;
+      }
+      if (!ok) continue;
+
+      const roll = rand();
+
+      if (biome === "grass") {
+        if (roll < 0.40) {
+          // Wildflower: small white or yellow petal cluster (4 dots in a +)
+          const isYellow = rand() < 0.5;
+          const petal = isYellow ? "rgba(250, 232, 120, 0.95)" : "rgba(248, 248, 245, 0.95)";
+          const center = isYellow ? "rgba(180, 130, 40, 0.95)" : "rgba(220, 200, 80, 0.95)";
+          const r = ts * 0.020;
+          g.fillStyle = petal;
+          for (const [px, py] of [[0, -r], [r, 0], [0, r], [-r, 0]]) {
+            g.beginPath();
+            g.arc(dx + px, dy + py, r * 0.85, 0, Math.PI * 2);
+            g.fill();
+          }
+          g.fillStyle = center;
+          g.beginPath();
+          g.arc(dx, dy, r * 0.55, 0, Math.PI * 2);
+          g.fill();
+        } else if (roll < 0.70) {
+          // Pebble cluster: 2-3 small grey-brown ovals
+          const pebbleCount = 1 + Math.floor(rand() * 2);
+          for (let p = 0; p < pebbleCount; p++) {
+            const px = dx + (rand() - 0.5) * ts * 0.06;
+            const py = dy + (rand() - 0.5) * ts * 0.03;
+            const pr = ts * (0.018 + rand() * 0.012);
+            g.fillStyle = `rgba(${110 + Math.floor(rand() * 30)}, ${100 + Math.floor(rand() * 25)}, ${85 + Math.floor(rand() * 20)}, 0.95)`;
+            g.beginPath();
+            g.ellipse(px, py, pr, pr * 0.65, 0, 0, Math.PI * 2);
+            g.fill();
+            // tiny highlight
+            g.fillStyle = "rgba(255, 255, 255, 0.30)";
+            g.beginPath();
+            g.ellipse(px - pr * 0.25, py - pr * 0.25, pr * 0.30, pr * 0.18, 0, 0, Math.PI * 2);
+            g.fill();
+          }
+        } else if (roll < 0.92) {
+          // Grass tuft: 3-4 short upward strokes in a darker green
+          g.strokeStyle = `rgba(${50 + Math.floor(rand() * 25)}, ${100 + Math.floor(rand() * 30)}, ${45 + Math.floor(rand() * 20)}, 0.85)`;
+          g.lineWidth = 0.9;
+          g.lineCap = "round";
+          const blades = 3 + Math.floor(rand() * 2);
+          for (let b = 0; b < blades; b++) {
+            const bx = dx + (b - blades / 2) * ts * 0.018;
+            const by = dy + ts * 0.012;
+            const tipX = bx + (rand() - 0.5) * ts * 0.012;
+            const tipY = by - ts * (0.025 + rand() * 0.015);
+            g.beginPath();
+            g.moveTo(bx, by);
+            g.lineTo(tipX, tipY);
+            g.stroke();
+          }
+        } else {
+          // Small sapling: brown trunk + green canopy
+          const trunkH = ts * 0.06;
+          g.fillStyle = "#6b4f2a";
+          g.fillRect(dx - 0.8, dy - trunkH * 0.3, 1.6, trunkH * 0.6);
+          g.fillStyle = `rgba(${30 + Math.floor(rand() * 20)}, ${110 + Math.floor(rand() * 25)}, ${40 + Math.floor(rand() * 20)}, 0.92)`;
+          g.beginPath();
+          g.arc(dx, dy - trunkH * 0.5, ts * 0.045, 0, Math.PI * 2);
+          g.fill();
+          g.strokeStyle = "rgba(0, 0, 0, 0.35)";
+          g.lineWidth = 0.5;
+          g.stroke();
+        }
+      } else if (biome === "forest") {
+        // Forest gets pine saplings + moss patches + larger pebbles
+        if (roll < 0.55) {
+          // Pine sapling: triangle canopy + small trunk
+          const trunkH = ts * 0.05;
+          const canopyH = ts * 0.10;
+          g.fillStyle = "#5a3e22";
+          g.fillRect(dx - 1, dy - trunkH * 0.2, 2, trunkH * 0.7);
+          g.fillStyle = `rgba(${20 + Math.floor(rand() * 15)}, ${75 + Math.floor(rand() * 25)}, ${30 + Math.floor(rand() * 15)}, 0.95)`;
+          g.beginPath();
+          g.moveTo(dx, dy - trunkH * 0.2 - canopyH);
+          g.lineTo(dx - canopyH * 0.5, dy - trunkH * 0.2);
+          g.lineTo(dx + canopyH * 0.5, dy - trunkH * 0.2);
+          g.closePath();
+          g.fill();
+          g.strokeStyle = "rgba(0, 0, 0, 0.45)";
+          g.lineWidth = 0.5;
+          g.stroke();
+        } else if (roll < 0.85) {
+          // Moss patch: 3 small dark-green blobs
+          for (let b = 0; b < 3; b++) {
+            const bx = dx + (rand() - 0.5) * ts * 0.06;
+            const by = dy + (rand() - 0.5) * ts * 0.03;
+            g.fillStyle = `rgba(40, 90, 50, 0.55)`;
+            g.beginPath();
+            g.ellipse(bx, by, ts * 0.025, ts * 0.013, 0, 0, Math.PI * 2);
+            g.fill();
+          }
+        } else {
+          // Large mossy pebble
+          g.fillStyle = "rgba(95, 88, 70, 0.95)";
+          g.beginPath();
+          g.ellipse(dx, dy, ts * 0.032, ts * 0.020, 0, 0, Math.PI * 2);
+          g.fill();
+          g.fillStyle = "rgba(50, 95, 55, 0.45)";
+          g.beginPath();
+          g.ellipse(dx - ts * 0.005, dy - ts * 0.008, ts * 0.018, ts * 0.008, 0, 0, Math.PI * 2);
+          g.fill();
+        }
+      } else if (biome === "desert") {
+        // Desert: bleached rocks + dry tufts
+        if (roll < 0.6) {
+          g.fillStyle = `rgba(${190 + Math.floor(rand() * 25)}, ${175 + Math.floor(rand() * 20)}, ${140 + Math.floor(rand() * 20)}, 0.95)`;
+          g.beginPath();
+          g.ellipse(dx, dy, ts * 0.025, ts * 0.016, 0, 0, Math.PI * 2);
+          g.fill();
+          g.strokeStyle = "rgba(120, 90, 50, 0.4)";
+          g.lineWidth = 0.5;
+          g.stroke();
+        } else {
+          g.strokeStyle = "rgba(150, 130, 70, 0.7)";
+          g.lineWidth = 0.8;
+          for (let b = 0; b < 3; b++) {
+            const bx = dx + (b - 1) * ts * 0.014;
+            g.beginPath();
+            g.moveTo(bx, dy + ts * 0.01);
+            g.lineTo(bx + (rand() - 0.5) * ts * 0.01, dy - ts * 0.022);
+            g.stroke();
+          }
+        }
+      } else if (biome === "snow") {
+        // Snow: small drifts + dark twigs
+        if (roll < 0.55) {
+          g.fillStyle = "rgba(255, 255, 255, 0.95)";
+          g.beginPath();
+          g.ellipse(dx, dy, ts * 0.030, ts * 0.014, 0, 0, Math.PI * 2);
+          g.fill();
+          g.fillStyle = "rgba(180, 200, 230, 0.5)";
+          g.beginPath();
+          g.ellipse(dx + ts * 0.008, dy + ts * 0.003, ts * 0.018, ts * 0.008, 0, 0, Math.PI * 2);
+          g.fill();
+        } else {
+          g.strokeStyle = "rgba(60, 45, 30, 0.85)";
+          g.lineWidth = 0.9;
+          g.beginPath();
+          g.moveTo(dx - ts * 0.025, dy + ts * 0.005);
+          g.lineTo(dx + ts * 0.025, dy - ts * 0.008);
+          g.stroke();
+        }
+      }
+    }
   }
 
   /**

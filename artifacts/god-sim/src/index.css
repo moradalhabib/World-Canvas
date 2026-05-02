@@ -16,7 +16,23 @@ body {
   overflow: hidden;
   overscroll-behavior: none;
   background: #0d1117;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Phase 15 "Dark Royal": elegant serif as the default UI face. */
+  font-family: "Cormorant Garamond", "EB Garamond", "Cinzel", Georgia, "Times New Roman", serif;
+}
+
+/* Phase 15: shared aged-gold color tokens for the Dark Royal theme.
+ * Use these via var(--royal-gold) so a future re-skin only needs to
+ * touch this block. */
+:root {
+  --royal-gold:        #c9a961;
+  --royal-gold-dim:    #8a7338;
+  --royal-gold-bright: #f4cf5b;
+  --royal-charcoal:    #1a1612;
+  --royal-charcoal-2:  #221c16;
+  --royal-charcoal-3:  #14110d;
+  --royal-parchment:   #d4b896;
+  --royal-parchment-2: #b89868;
+  --royal-ink:         #2a1f12;
 }
 
 #root {
@@ -61,23 +77,26 @@ body {
 }
 
 .hud-time {
-  background: rgba(20, 28, 40, 0.45);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
+  /* Phase 15: dark wood + ornate gold border, serif text. */
+  background:
+    linear-gradient(180deg, var(--royal-charcoal-2) 0%, var(--royal-charcoal-3) 100%);
+  border: 1px solid var(--royal-gold);
+  border-radius: 8px;
   padding: 9px 22px;
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
   box-shadow:
-    0 4px 24px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    0 4px 24px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 1px rgba(244, 207, 91, 0.18),
+    inset 0 1px 0 rgba(244, 207, 91, 0.25);
 }
 
 .hud-date {
-  color: #f0f4f8;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.6px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  color: var(--royal-gold-bright);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  font-variant: small-caps;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  font-family: "Cinzel", "Cormorant Garamond", Georgia, serif;
 }
 
 .hud-resources {
@@ -85,15 +104,14 @@ body {
   flex-wrap: wrap;
   justify-content: center;
   gap: 4px;
-  background: rgba(20, 28, 40, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 14px;
+  background:
+    linear-gradient(180deg, var(--royal-charcoal-2) 0%, var(--royal-charcoal-3) 100%);
+  border: 1px solid var(--royal-gold);
+  border-radius: 8px;
   padding: 6px 8px;
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
   box-shadow:
-    0 4px 18px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    0 4px 18px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 1px rgba(244, 207, 91, 0.15);
   max-width: calc(100% - 24px);
 }
 
@@ -102,10 +120,11 @@ body {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(201, 169, 97, 0.22);
   min-width: 52px;
-  transition: background 0.25s ease, box-shadow 0.25s ease;
+  transition: background 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
 }
 
 .resource-alert {
@@ -127,12 +146,13 @@ body {
 }
 
 .resource-val {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
-  color: #f0f4f8;
-  letter-spacing: 0.3px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  color: var(--royal-parchment);
+  letter-spacing: 0.4px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
   font-variant-numeric: tabular-nums;
+  font-family: "Cinzel", Georgia, serif;
 }
 
 /* ── HUD: left (needs panel) ── */
@@ -141,26 +161,44 @@ body {
   left: 12px;
   top: 50%;
   transform: translateY(-50%);
-  width: 168px;
-  background: rgba(20, 28, 40, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 14px;
-  padding: 10px 12px;
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  width: 184px;
+  /* Phase 15: dark wood + double gold border, looks like an inlaid plaque. */
+  background:
+    linear-gradient(180deg, var(--royal-charcoal-2) 0%, var(--royal-charcoal-3) 100%);
+  border: 1px solid var(--royal-gold);
+  border-radius: 6px;
+  padding: 12px 14px 10px;
   box-shadow:
-    0 4px 18px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    0 6px 24px rgba(0, 0, 0, 0.6),
+    inset 0 0 0 1px rgba(244, 207, 91, 0.18),
+    inset 0 0 12px rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
+/* Phase 15: ornate corner flourishes (gold corner brackets). */
+.hud-needs::before,
+.hud-needs::after {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--royal-gold-bright);
+  opacity: 0.85;
+}
+.hud-needs::before { top: 4px;    left: 4px;    border-right: none; border-bottom: none; }
+.hud-needs::after  { bottom: 4px; right: 4px;   border-left:  none; border-top:    none; }
 
 .needs-title {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 1.4px;
-  color: rgba(240, 244, 248, 0.55);
-  margin-bottom: 8px;
+  letter-spacing: 2.5px;
+  color: var(--royal-gold-bright);
+  margin-bottom: 10px;
   text-align: center;
+  font-variant: small-caps;
+  font-family: "Cinzel", Georgia, serif;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(201, 169, 97, 0.35);
 }
 
 .need-row {
@@ -172,33 +210,37 @@ body {
 }
 
 .need-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.4px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  font-family: "Cormorant Garamond", Georgia, serif;
+  font-variant: small-caps;
 }
 
 .need-track {
-  height: 6px;
-  background: rgba(0, 0, 0, 0.4);
-  border-radius: 3px;
+  height: 7px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 2px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(201, 169, 97, 0.28);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
 .need-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: 2px;
   transition: width 0.4s ease, background 0.3s ease;
-  box-shadow: 0 0 6px currentColor;
+  box-shadow: 0 0 6px currentColor, inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .need-val {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
-  color: rgba(240, 244, 248, 0.85);
+  color: var(--royal-parchment);
   text-align: right;
   font-variant-numeric: tabular-nums;
+  font-family: "Cinzel", Georgia, serif;
 }
 
 /* ── HUD: bottom ── */
@@ -219,34 +261,34 @@ body {
 .time-controls {
   display: flex;
   gap: 6px;
-  background: rgba(20, 28, 40, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
+  /* Phase 15: dark wood time bar with gold border. */
+  background:
+    linear-gradient(180deg, var(--royal-charcoal-2) 0%, var(--royal-charcoal-3) 100%);
+  border: 1px solid var(--royal-gold);
+  border-radius: 8px;
   padding: 6px 8px;
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
   box-shadow:
-    0 6px 28px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    0 6px 28px rgba(0, 0, 0, 0.6),
+    inset 0 0 0 1px rgba(244, 207, 91, 0.18);
   pointer-events: all;
 }
 
 .time-btn {
   width: 46px;
   height: 46px;
-  border-radius: 50%;
-  border: none;
-  background: transparent;
-  color: rgba(240, 244, 248, 0.65);
+  border-radius: 4px;
+  border: 1px solid rgba(201, 169, 97, 0.22);
+  background: rgba(0, 0, 0, 0.32);
+  color: var(--royal-gold);
   font-size: 18px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.18s ease, color 0.18s ease, transform 0.1s ease;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.1s ease, border-color 0.18s ease;
   -webkit-touch-callout: none;
   touch-action: manipulation;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
 .time-btn:active {
@@ -254,11 +296,12 @@ body {
 }
 
 .time-btn.active {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.25), rgba(255, 255, 255, 0.12));
-  color: #ffffff;
+  background: linear-gradient(180deg, rgba(244, 207, 91, 0.32), rgba(180, 130, 30, 0.32));
+  color: #fffaee;
+  border-color: var(--royal-gold-bright);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    0 2px 8px rgba(0, 0, 0, 0.3);
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 14px rgba(244, 207, 91, 0.4);
 }
 
 /* Phase 4: Inner Monologue overlay */
@@ -541,4 +584,75 @@ body {
   .tool-btn { width: 52px; height: 52px; }
   .tool-label { display: none; }
   .tool-submenu { right: 62px; min-width: 140px; }
+}
+
+/* ─────────────────────────────────────────────────────────────────── */
+/* Phase 15 "Dark Royal" — Royal Chronicle parchment scroll            */
+/* ─────────────────────────────────────────────────────────────────── */
+
+.royal-chronicle {
+  position: absolute;
+  top: 92px;
+  right: 14px;
+  width: 280px;
+  max-height: 280px;
+  overflow-y: auto;
+  /* Aged parchment with subtle vertical fiber gradient. */
+  background:
+    radial-gradient(ellipse at top,    rgba(160, 120, 60, 0.15) 0%, transparent 70%),
+    radial-gradient(ellipse at bottom, rgba(120,  80, 40, 0.20) 0%, transparent 70%),
+    linear-gradient(180deg, #d8bf91 0%, #c8a878 50%, #b89860 100%);
+  /* Two-layer border: outer dark wood frame + inner gold inlay. */
+  border: 3px solid var(--royal-charcoal);
+  border-radius: 4px;
+  padding: 14px 16px 14px;
+  color: var(--royal-ink);
+  font-family: "Cormorant Garamond", "EB Garamond", Georgia, serif;
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.7),
+    inset 0 0 0 1px var(--royal-gold),
+    inset 0 0 30px rgba(120, 80, 40, 0.35);
+}
+.royal-chronicle::-webkit-scrollbar { width: 6px; }
+.royal-chronicle::-webkit-scrollbar-thumb { background: var(--royal-gold-dim); border-radius: 3px; }
+.royal-chronicle::-webkit-scrollbar-track { background: transparent; }
+
+.chronicle-title {
+  font-family: "Cinzel", Georgia, serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 2.2px;
+  color: var(--royal-charcoal);
+  margin-bottom: 10px;
+  text-align: center;
+  font-variant: small-caps;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(60, 40, 20, 0.45);
+  text-shadow: 0 1px 0 rgba(255, 240, 200, 0.6);
+}
+
+.chronicle-entry {
+  margin-bottom: 9px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.chronicle-year {
+  flex-shrink: 0;
+  font-family: "Cinzel", Georgia, serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: rgba(60, 40, 20, 0.7);
+  font-variant: small-caps;
+  min-width: 28px;
+}
+
+.chronicle-text {
+  flex: 1;
+  color: var(--royal-ink);
+  font-style: italic;
 }

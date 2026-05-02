@@ -41,6 +41,37 @@ The game simulates civic needs, hunger, and complex NPC state machines, includin
 ## UI/UX
 The UI includes an inspect modal showing detailed citizen information (name, micro-state, mood bar) and HUD elements displaying current season and weather with emojis. Overlays for citizen states (chatting bubbles, mental break glyphs, sick aura, state-specific glyphs for new states like STEALING) are rendered with specific zoom-level visibility. Building signs are rendered for new building types.
 
+### Phase 15 — Visual Spec Override (Dark Royal theme + procedural detail)
+Concept-art override pass — premium hand-illustrated isometric look. Adds five visual layers without touching simulation, perf, or save format.
+
+- **Procedural terrain clutter** baked into the cached `terrainLayer` (zero per-frame cost). `drawTerrainClutter` runs inside `rebuildTerrainLayer`'s tile loop and uses a deterministic mulberry32 RNG seeded by `(row, col)` — same tile always renders the same scatter, never flickers on rebuild (meteor / architect brush). Biome pools:
+  - `grass`: white/yellow wildflowers, pebble clusters with highlights, grass tufts, occasional saplings.
+  - `forest`: pine saplings (triangle canopy + trunk), moss patches, mossy pebbles.
+  - `desert`: bleached rocks, dry tufts.
+  - `snow`: snow drifts with shadow rim, dark twigs.
+  - Skipped on water/mountain/crater — those biomes already have full-tile texture.
+  - Each prop is rejection-sampled to stay inside the diamond footprint (`|dx|/(ts/2) + |dy|/(ts/4) ≤ 0.82`) so it never bleeds into neighbor tiles when the layer is blitted.
+- **Interior furniture stamps** in `drawBuildingFloor` → `drawInteriorFurniture`. Drawn on the FLOOR layer (sortKey −0.10) so it sits BEHIND the citizen sprite (sortKey +0.01) but inside the back wall (sortKey −0.05), giving the dollhouse cutaway a furnished interior whenever the roof fades to 0.25α. Per-building variants:
+  - `residential` (house_free/middle/high): bed (frame + mattress + pillow) + wooden table. `house_high` flips `ornate=true` for gold-trimmed bed and a gold goblet on the table.
+  - `tavern`: bar counter with three mugs + barrel with two iron bands.
+  - `apothecary`: two potion shelves with green/red/blue vials + mortar & pestle.
+  - `dungeon`: iron-bar grate (4 vertical bars in a frame) + straw pile + iron manacle ring.
+  - `production farm/bakery`: stack of three grain sacks + wheat sheaf.
+  - `production mine`: dark ore chunk pile with a tiny gleam + pickaxe leaning on the wall.
+  - `production lumber_camp`: stack of three logs with tree-ring marks on the visible end.
+  - Generic `service` fallback: simple bench (safety net for future service buildings).
+  - **Warning**: the building-type switch is gated on the real `BuildingId` union — DO NOT add `else if (t === "house" | "mill" | "quarry" | "lumber" | "church" | "temple")` branches; those IDs do not exist and TS will fail with TS2367. The full union is in `types.ts` line 164: `house_free | house_middle | house_high | farm | bakery | lumber_camp | mine | well | dungeon | apothecary | tavern`.
+- **King royal cape** added to `buildCompositeSprite` when `c.isKing` (only the actual king, not queens / dowagers — keeps his silhouette unmistakable). Crimson trapezoid drape (wider at the bottom) with gold trim down both edges, ermine collar (white fur band with 5 black tail spots), gold sash diagonal across the chest. **Critical**: after drawing the collar band, the body silhouette is RE-filled with the existing `grad` linear gradient (still in scope from the earlier body draw) below the collar so the tunic stays visible — moving the cape draw block above the body fill or out of `buildCompositeSprite` will break this and the king's torso will go solid white.
+- **Dark Royal CSS theme** — `:root` now defines `--royal-gold / --royal-gold-dim / --royal-gold-bright / --royal-charcoal{,-2,-3} / --royal-parchment{,-2} / --royal-ink` color tokens. Re-skinning the whole HUD is a one-block edit.
+  - `body { font-family: "Cormorant Garamond", "EB Garamond", "Cinzel", Georgia, serif }` — sets the elegant serif as the UI default.
+  - `.hud-time / .hud-resources / .hud-needs / .time-controls`: charcoal vertical-gradient backgrounds with single gold border + inset gold inlay + heavier black drop-shadow. NO backdrop-filter — the parchment/wood texture is the depth.
+  - `.hud-date`: Cinzel small-caps in `--royal-gold-bright`. `.resource-val / .need-val`: Cinzel tabular-nums in `--royal-parchment`. `.needs-title`: Cinzel small-caps + gold underline.
+  - `.hud-needs::before / ::after`: ornate gold corner brackets (top-left + bottom-right, 14×14 with 2px gold borders on two sides).
+  - `.time-btn.active`: gold gradient + bright gold border + soft gold glow — replaces the previous white-on-glass active state.
+- **Royal Chronicle parchment scroll** — new classes `.royal-chronicle / .chronicle-title / .chronicle-entry / .chronicle-year / .chronicle-text`. Background is a stacked radial+linear gradient producing aged parchment (#d8bf91 → #b89860 with bottom darkening). Border is a 3px dark-wood outer frame + inset 1px gold inlay + inset 30px brown vignette. Title is Cinzel small-caps in dark charcoal with light-cream text-shadow (looks embossed on parchment). Years are small-caps Cinzel; entry text is italic Cormorant. Custom thin gold scrollbar.
+  - Chronicle JSX in `App.tsx` was refactored from inline styles to these classes — DO NOT re-introduce inline `background:` / `color:` props on the `<div className="royal-chronicle">` or you'll override the parchment.
+- **Hunger spawn verified clean** — `npc.ts:198 hunger: 0`, `civilization.ts:55 hunger: { value: 0, ... }`. Screenshot confirms Civic Needs Hunger = 0 at year 1. No bug.
+
 ### Phase 14b — Dollhouse Render (layered buildings + transparent roofs)
 - Buildings (except wells and rubble) are now composed of three depth-sorted layers that interleave with citizens in the scene queue:
   - **Floor** at `sortKey = row + col − 0.10` — a wood/stone iso-diamond plank floor sized to the building footprint. Drop shadow is drawn here.
