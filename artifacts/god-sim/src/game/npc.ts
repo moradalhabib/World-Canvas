@@ -24,8 +24,10 @@ import {
 /*  Tunables                                                                  */
 /* -------------------------------------------------------------------------- */
 
-const HUNGER_RISE_PER_MONTH = 8;
-const HUNGER_RISE_JITTER = 6;
+// Phase 11 balance pass: base hunger drain reduced ~30% (8→6 base, 6→4 jitter)
+// so the town can survive the new Winter cycles without immediately starving.
+const HUNGER_RISE_PER_MONTH = 6;
+const HUNGER_RISE_JITTER = 4;
 const HUNGER_SEEK_THRESHOLD = 70;
 const HUNGER_CRISIS_THRESHOLD = 100;
 const FAITH_PRAY_THRESHOLD = 50;
@@ -37,7 +39,9 @@ const GRAVESTONE_PROXIMITY_RADIUS = 2; // tiles
 const GRAVESTONE_SOCIAL_PENALTY = 0.5; // applied per tile-snap when near a grave
 
 /* Phase 4: Economy & Factions tunables */
-const GOODS_PER_MONTH_FARMER = 6;
+// Phase 11 balance pass: Farmer base yield +50% (6→9) so winter food stocks
+// recover. Miners unchanged — diamond-tier yield is already steep with mastery.
+const GOODS_PER_MONTH_FARMER = 9;
 const GOODS_PER_MONTH_MINER = 5;
 const GUARD_STIPEND_VANITY = 1;       // tiny per-month vanity gain for guards
 const VANITY_NOBLE_THRESHOLD = 50;    // peasant → noble visual upgrade
@@ -50,7 +54,12 @@ const TREASURY_PER_GOOD = 1;          // gold per banked unit of goods (civ tax)
 const GRUDGE_OPINION = -100;        // score logged when an NPC witnesses an attack
 const WITNESS_RADIUS = 5;           // tiles — bystanders within this range remember the attacker
 const XP_PER_BANK = 10;             // xp granted on a successful goods → gold conversion
-const XP_PER_LEVEL = 100;           // xp needed to level up
+// Phase 11 balance pass: per-level XP cost lowered 100→40 so a working
+// adult realistically reaches Mastery level 10 well before Elder age (60).
+// At ~6 successful banks/year (factoring SEEK_FOOD/sleep interruptions), a
+// citizen will hit level 10 in roughly 6 adult years and enjoy 35+ years
+// of Mastery visuals (gold hoe, diamond pickaxe, plated guard shield).
+const XP_PER_LEVEL = 40;            // xp needed to level up
 const ZEALOT_FAITH_DECAY = 0.5;     // per game-month
 const NORMAL_FAITH_DECAY = 1;       // per game-month
 const DILIGENT_HUNGER_MUL = 1.2;    // hunger rises 20% faster
