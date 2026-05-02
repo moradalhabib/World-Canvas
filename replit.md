@@ -41,6 +41,18 @@ The game simulates civic needs, hunger, and complex NPC state machines, includin
 ## UI/UX
 The UI includes an inspect modal showing detailed citizen information (name, micro-state, mood bar) and HUD elements displaying current season and weather with emojis. Overlays for citizen states (chatting bubbles, mental break glyphs, sick aura, state-specific glyphs for new states like STEALING) are rendered with specific zoom-level visibility. Building signs are rendered for new building types.
 
+### Phase 14b — Dollhouse Render (layered buildings + transparent roofs)
+- Buildings (except wells and rubble) are now composed of three depth-sorted layers that interleave with citizens in the scene queue:
+  - **Floor** at `sortKey = row + col − 0.10` — a wood/stone iso-diamond plank floor sized to the building footprint. Drop shadow is drawn here.
+  - **Back-structure** at `sortKey = row + col − 0.05` — back-wall strip + right-side iso parallelogram (everything that visually sits behind the NPC).
+  - **Citizen** at `sortKey = row + col + 0.01` — unchanged.
+  - **Front+roof** at `sortKey = row + col + 0.50` — front wall, door, full gable roof, shingle texture, glyph badges, manor gold accent, night-window glow, and the center category letter glyph.
+- The front+roof layer wraps the roof draw block in `ctx.save() / globalAlpha = roofAlpha / restore()`. `roofAlpha = 0.25` when an NPC stands on the building's tile, otherwise `1.0`. The front wall, glyph badges, manor accent, and category letter stay fully opaque so the building remains identifiable in cutaway mode.
+- Occupancy is computed once per frame via a `Set<"row,col">` of all non-DEAD citizens, keyed on each citizen's LOGICAL tile (`c.row`, `c.col`) rather than their interpolated visual position. This gives the cutaway natural hysteresis — the roof opens the moment an NPC commits to a building tile and stays open until they've fully stepped off, avoiding any per-frame flicker as the visual sprite slides across a tile edge. O(N_citizens) build, O(1) lookup per building.
+- `drawSingleBuilding` is now used ONLY for wells (round, no roof) and rubble (no layering). All other buildings push three queue entries directly from the render loop and skip `drawSingleBuilding` entirely.
+- Building scale was bumped from `pad = ts * 0.15` (≈70% tile width) to `pad = ts * 0.07` (≈86% tile width) so houses fill their tile substantially. Floor/back/front methods all share this constant — change in one place to keep the layers aligned.
+- Future renderer changes: any new building type that follows the iso-house silhouette must work with all three layered methods. New service buildings without a roof (like the well) need to be added to the `isLegacyCombined` predicate in the render loop.
+
 ## Data Persistence
 Storage is versioned (currently v11) with backward compatibility for older saves. New fields are backfilled during state loading (`normalizeCitizens`). Critical clock invariants are maintained for real-time driven events.
 

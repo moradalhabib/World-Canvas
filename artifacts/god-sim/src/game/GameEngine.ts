@@ -1061,6 +1061,14 @@ export class GameEngine {
    *   y = sy - ts*0.6   (so the wall base ~ sy + ts*0.1, slightly below
    *                      tile center, hugging the lower diamond half)
    */
+  /**
+   * Phase 14b "Dollhouse" — drawSingleBuilding is now used ONLY for the
+   * combined-render paths: rubble (no layering needed) and the circular
+   * well (round, no roof to cut away). All other buildings go through the
+   * three-layer queue (floor → back → citizen → front+roof) so the
+   * caller in render() pushes those entries directly and skips this
+   * method for them.
+   */
   private drawSingleBuilding(b: Building, sx: number, sy: number, ts: number) {
     const ctx = this.ctx;
     const cam = this.state.camera;
@@ -1071,16 +1079,366 @@ export class GameEngine {
       return;
     }
     const def = getBuildingDef(b.typeId);
+    // Only the well uses the legacy combined draw — everything else is
+    // composed via the three-layer queue and never reaches this path.
+    if (!(def.category === "service" && b.typeId === "well")) return;
     this.drawBuilding(b, def, x, y, ts);
-    // Glyph painted right after its building so any later (more in-front)
-    // building draw can occlude it. Anchor at iso tile center so glyphs
-    // line up consistently across building types.
     if (cam.zoom > 0.7) {
       ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
       ctx.font = `bold ${Math.round(ts * 0.32)}px -apple-system, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(def.glyph, sx, sy);
+    }
+  }
+
+  /**
+   * Phase 14b "Dollhouse" — true layered iso building render. Splits the
+   * building into FOUR draw passes that interleave with citizens in the
+   * depth queue so NPCs draw between the floor and the roof, giving an
+   * always-visible cutaway when an NPC stands on the building's tile.
+   *
+   * Layer order on the SAME tile (smaller sortKey draws first):
+   *   1. floor          (sortKey - 0.1)  — wood/stone diamond on the ground
+   *   2. back-structure (sortKey - 0.05) — right-side iso wall + back wall
+   *   3. citizen        (sortKey + 0.01) — NPC sprite stands on the floor
+   *   4. front+roof     (sortKey + 0.5)  — front wall, door, roof, glyph
+   *                                         (roof fades to 0.25α when occupied,
+   *                                          walls stay opaque)
+   *
+   * The front-wall is intentionally NOT faded — the prompt asks for the
+   * NPC to be "behind any foreground walls so they look like they're
+   * standing inside the room." Only the roof goes transparent.
+   */
+  private drawBuildingFloor(b: Building, def: ReturnType<typeof getBuildingDef>, x: number, y: number, ts: number) {
+    if (b.status === "rubble") return;
+    if (def.category === "service" && b.typeId === "well") return; // wells use legacy combined draw
+    const ctx = this.ctx;
+    const isNight = this.state.dayNight === "night";
+    const cx = x + ts * 0.5;
+    const groundY = y + ts * 0.55;
+
+    // Soft elongated drop shadow beneath the building.
+    ctx.fillStyle = isNight ? "rgba(0,0,0,0.20)" : "rgba(0,0,0,0.36)";
+    ctx.beginPath();
+    const shadowOff = isNight ? 0.02 : 0.10;
+    ctx.ellipse(
+      x + ts * (0.5 + shadowOff),
+      y + ts * 0.93,
+      ts * (0.46 + shadowOff),
+      ts * 0.09,
+      0, 0, Math.PI * 2
+    );
+    ctx.fill();
+
+    // Interior floor diamond — warm wood for residential, stone for service,
+    // packed earth for production. Sized to a 2:1 dimetric diamond inside
+    // the building footprint so it reads as floor planks on the ground.
+    let floorColor = "#a87a4a";
+    let floorDark = "#7a5a32";
+    if (def.category === "service") {
+      floorColor = "#8a8278";
+      floorDark = "#5a544c";
+    } else if (def.category === "production") {
+      floorColor = "#9a7a52";
+      floorDark = "#6a5236";
+    }
+    if (b.typeId === "house_high") {
+      floorColor = "#c8a878";
+      floorDark = "#8a6c44";
+    }
+
+    const fw = ts * 0.86;
+    const fh = fw * 0.5;
+    // Diamond points (top, right, bottom, left)
+    const tx = cx, ty = groundY - fh * 0.5;
+    const rx = cx + fw * 0.5, ry = groundY;
+    const bx = cx, by = groundY + fh * 0.5;
+    const lx = cx - fw * 0.5, ly = groundY;
+
+    // Floor fill with subtle gradient (lighter at the top-left, darker at
+    // the bottom-right) for a hint of iso lighting.
+    const grad = ctx.createLinearGradient(lx, ty, rx, by);
+    grad.addColorStop(0, floorColor);
+    grad.addColorStop(1, floorDark);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(rx, ry);
+    ctx.lineTo(bx, by);
+    ctx.lineTo(lx, ly);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.45)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Plank seams — three thin lines parallel to the iso "floorboard"
+    // direction (top-left → bottom-right axis), giving the floor a
+    // recognizable wooden-plank read.
+    ctx.strokeStyle = "rgba(0,0,0,0.22)";
+    ctx.lineWidth = 0.6;
+    for (let i = 1; i <= 3; i++) {
+      const t = i / 4;
+      // Interpolate seam endpoints along the left and right edges.
+      const x1 = tx + (lx - tx) * t;
+      const y1 = ty + (ly - ty) * t;
+      const x2 = rx + (bx - rx) * t;
+      const y2 = ry + (by - ry) * t;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+  }
+
+  /**
+   * Phase 14b "Dollhouse" — back-structure layer. Draws the iso right-side
+   * wall (parallelogram) and a thin back-wall strip. These appear BEHIND
+   * the NPC in iso projection so they go in the queue at sortKey - 0.05,
+   * before the citizen (sortKey + 0.01).
+   */
+  private drawBuildingBackStructure(b: Building, def: ReturnType<typeof getBuildingDef>, x: number, y: number, ts: number) {
+    if (b.status === "rubble") return;
+    if (def.category === "service" && b.typeId === "well") return;
+    const ctx = this.ctx;
+    // Phase 14b: building scale bumped from pad=0.15 to pad=0.07 (≈86%
+    // tile width) so houses fill their tile substantially per the prompt.
+    const pad = ts * 0.07;
+    const w = ts - pad * 2;
+    const h = ts - pad * 2;
+    const px = x + pad;
+    const py = y + pad;
+    const wallH = h * 0.55;
+    const roofH = h * 0.45;
+    const wallTopY = py + roofH * 0.55;
+    const wallBotY = wallTopY + wallH;
+    const sideDepth = w * 0.14;
+    const sideColor = this.shadeHex(def.fillColor, -0.35);
+    const backColor = this.shadeHex(def.fillColor, -0.2);
+
+    // Back wall — a thin strip drawn at the rear of the floor, giving
+    // the room a back wall to "lean against" so the NPC doesn't look
+    // like they're floating in a doorless rectangle.
+    ctx.fillStyle = backColor;
+    ctx.fillRect(px, wallTopY, w, wallH * 0.35);
+    ctx.strokeStyle = "rgba(0,0,0,0.45)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px, wallTopY, w, wallH * 0.35);
+
+    // Right-side wall (faux-iso): parallelogram offset to upper-right.
+    ctx.fillStyle = sideColor;
+    ctx.beginPath();
+    ctx.moveTo(px + w, wallTopY);
+    ctx.lineTo(px + w + sideDepth, wallTopY - sideDepth * 0.6);
+    ctx.lineTo(px + w + sideDepth, wallBotY - sideDepth * 0.6);
+    ctx.lineTo(px + w, wallBotY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  /**
+   * Phase 14b "Dollhouse" — front wall + roof layer. Drawn AFTER the
+   * citizen in the depth queue. The front wall stays fully opaque so it
+   * still occludes the lower body of the NPC like a real wall would; the
+   * roof is the only piece that fades to `roofAlpha` when an NPC is
+   * inside, giving the cutaway dollhouse view.
+   */
+  private drawBuildingFrontAndRoof(
+    b: Building,
+    def: ReturnType<typeof getBuildingDef>,
+    x: number,
+    y: number,
+    ts: number,
+    roofAlpha: number
+  ) {
+    if (b.status === "rubble") return;
+    if (def.category === "service" && b.typeId === "well") return;
+    const ctx = this.ctx;
+    const isNight = this.state.dayNight === "night";
+    const pad = ts * 0.07;
+    const w = ts - pad * 2;
+    const h = ts - pad * 2;
+    const px = x + pad;
+    const py = y + pad;
+    const wallH = h * 0.55;
+    const roofH = h * 0.45;
+    const wallTopY = py + roofH * 0.55;
+    const wallBotY = wallTopY + wallH;
+    const sideDepth = w * 0.14;
+
+    // ── Front wall (always opaque — the "foreground wall" the prompt asks
+    // the NPC to stand BEHIND) ───────────────────────────────────────────
+    // Front wall fill — but only the LOWER portion so the NPC's torso
+    // peeks above the front wall. Upper portion is already drawn by the
+    // back-wall strip in drawBuildingBackStructure.
+    const frontWallTop = wallTopY + wallH * 0.35;
+    const frontWallH = wallH - wallH * 0.35;
+    ctx.fillStyle = def.fillColor;
+    ctx.fillRect(px, frontWallTop, w, frontWallH);
+
+    // Wood/stone grain — thin horizontal lines on the front wall.
+    ctx.strokeStyle = "rgba(0,0,0,0.18)";
+    ctx.lineWidth = 0.6;
+    for (let gy = frontWallTop + frontWallH * 0.30; gy < wallBotY; gy += frontWallH * 0.30) {
+      ctx.beginPath();
+      ctx.moveTo(px + 1, gy);
+      ctx.lineTo(px + w - 1, gy);
+      ctx.stroke();
+    }
+    // Door / windows (door for residential + service, windows for production).
+    if (def.category !== "production") {
+      ctx.fillStyle = "rgba(40,20,10,0.55)";
+      const doorW = w * 0.18;
+      const doorH = frontWallH * 0.75;
+      ctx.fillRect(px + w * 0.5 - doorW * 0.5, wallBotY - doorH, doorW, doorH);
+      ctx.fillStyle = "rgba(60,30,15,0.55)";
+      ctx.beginPath();
+      ctx.arc(px + w * 0.5, wallBotY - doorH, doorW * 0.5, Math.PI, 0);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = "rgba(80,60,25,0.7)";
+      ctx.fillRect(px + w * 0.30, frontWallTop + frontWallH * 0.20, w * 0.18, frontWallH * 0.35);
+      ctx.fillRect(px + w * 0.55, frontWallTop + frontWallH * 0.20, w * 0.18, frontWallH * 0.35);
+    }
+    // Front-wall outline.
+    ctx.strokeStyle = "rgba(0,0,0,0.55)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px, frontWallTop, w, frontWallH);
+
+    // Window glow at night (on front wall, fades with roof alpha so the
+    // cutaway view feels consistent — a glowing window on a transparent
+    // roof would look weird).
+    if (isNight && def.category !== "production") {
+      ctx.save();
+      ctx.globalAlpha = roofAlpha;
+      ctx.fillStyle = "rgba(255,210,120,0.65)";
+      ctx.fillRect(px + w * 0.18, frontWallTop + frontWallH * 0.20, w * 0.10, frontWallH * 0.25);
+      ctx.fillRect(px + w * 0.72, frontWallTop + frontWallH * 0.20, w * 0.10, frontWallH * 0.25);
+      ctx.restore();
+    }
+
+    // ── Roof (this is what fades) ──────────────────────────────────────
+    ctx.save();
+    ctx.globalAlpha = roofAlpha;
+
+    const roofPeakX = px + w * 0.5;
+    const roofPeakY = py;
+    const roofLeftX = px - w * 0.06;
+    const roofRightX = px + w + w * 0.06;
+    const roofBaseY = wallTopY;
+
+    // Left roof slope (lit)
+    ctx.fillStyle = def.roofColor;
+    ctx.beginPath();
+    ctx.moveTo(roofLeftX, roofBaseY);
+    ctx.lineTo(roofPeakX, roofPeakY);
+    ctx.lineTo(roofPeakX, roofBaseY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Right roof slope (shaded) with iso side
+    ctx.fillStyle = this.shadeHex(def.roofColor, -0.25);
+    ctx.beginPath();
+    ctx.moveTo(roofPeakX, roofPeakY);
+    ctx.lineTo(roofRightX, roofBaseY);
+    ctx.lineTo(roofPeakX, roofBaseY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Iso roof depth wedge along right side
+    ctx.fillStyle = this.shadeHex(def.roofColor, -0.45);
+    ctx.beginPath();
+    ctx.moveTo(roofRightX, roofBaseY);
+    ctx.lineTo(roofRightX + sideDepth, roofBaseY - sideDepth * 0.6);
+    ctx.lineTo(roofPeakX + sideDepth * 0.5, roofPeakY - sideDepth * 0.3);
+    ctx.lineTo(roofPeakX, roofPeakY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Shingle texture
+    ctx.strokeStyle = "rgba(0,0,0,0.30)";
+    ctx.lineWidth = 0.6;
+    for (let s = 0.2; s < 1; s += 0.22) {
+      const lx1 = roofLeftX + (roofPeakX - roofLeftX) * s;
+      const ly1 = roofBaseY + (roofPeakY - roofBaseY) * s;
+      const ly2 = ly1;
+      ctx.beginPath();
+      ctx.moveTo(lx1, ly1);
+      ctx.lineTo(roofPeakX, ly2);
+      ctx.stroke();
+      const rx2 = roofRightX + (roofPeakX - roofRightX) * s;
+      const ry2 = roofBaseY + (roofPeakY - roofBaseY) * s;
+      ctx.beginPath();
+      ctx.moveTo(roofPeakX, ry2);
+      ctx.lineTo(rx2, ry2);
+      ctx.stroke();
+    }
+
+    // Roof ridge outline
+    ctx.strokeStyle = "rgba(0,0,0,0.6)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(roofLeftX, roofBaseY);
+    ctx.lineTo(roofPeakX, roofPeakY);
+    ctx.lineTo(roofRightX, roofBaseY);
+    ctx.stroke();
+
+    ctx.restore(); // end roof-alpha block
+
+    // Gold tier indicator for high manors — full alpha (it's a status sign,
+    // not part of the roof itself).
+    if (b.typeId === "house_high") {
+      ctx.fillStyle = "#ffd84a";
+      ctx.shadowColor = "rgba(255, 200, 50, 0.8)";
+      ctx.shadowBlur = ts * 0.12;
+      ctx.beginPath();
+      ctx.arc(x + ts * 0.5, py - h * 0.10, ts * 0.07, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    // Phase 14 glyph badge for the three new building kinds — full alpha
+    // (the sign should stay readable even when the roof goes transparent).
+    if (
+      this.state.camera.zoom > 0.5 &&
+      (b.typeId === "dungeon" || b.typeId === "apothecary" || b.typeId === "tavern")
+    ) {
+      const glyph = b.typeId === "dungeon" ? "‖" : b.typeId === "apothecary" ? "+" : "🍺";
+      const color = b.typeId === "dungeon" ? "#9aa3ad" : b.typeId === "apothecary" ? "#e84545" : "#d4a04a";
+      const badgeCx = x + ts * 0.5;
+      const badgeCy = roofPeakY - ts * 0.10;
+      const haloR = ts * 0.13;
+      const grad = ctx.createRadialGradient(badgeCx, badgeCy, 0, badgeCx, badgeCy, haloR);
+      grad.addColorStop(0, color + "cc");
+      grad.addColorStop(1, color + "00");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(badgeCx, badgeCy, haloR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#0d1117";
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1, ts * 0.012);
+      ctx.font = `bold ${Math.round(ts * 0.22)}px Georgia, serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.strokeText(glyph, badgeCx, badgeCy);
+      ctx.fillText(glyph, badgeCx, badgeCy);
+    }
+
+    // Center category glyph (the single-letter "F" / "B" / "H" / etc. sign)
+    // is drawn last so it sits on top of the (potentially faded) roof. It
+    // stays at full alpha so the player can always identify the building
+    // type even when the roof is in cutaway mode.
+    if (this.state.camera.zoom > 0.7) {
+      ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+      ctx.font = `bold ${Math.round(ts * 0.32)}px -apple-system, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(def.glyph, x + ts * 0.5, y + ts * 0.5);
     }
   }
 
@@ -2879,13 +3237,58 @@ export class GameEngine {
     const queue: SceneEntry[] = [];
     const rows = grid.rows;
 
+    // Phase 14b "Dollhouse" — pre-compute building occupancy so the front+roof
+    // layer can fade the roof when an NPC is on the building's tile. We
+    // hash by "row,col" and check non-DEAD citizens only (corpses don't
+    // open the dollhouse). O(N_citizens) once per frame, then O(1) per
+    // building lookup.
+    //
+    // Architect note: we use the citizen's LOGICAL tile (c.row, c.col) —
+    // not the smoothly-interpolated visual position — to avoid roof
+    // flicker as an NPC walks across the edge of a house tile. The
+    // logical row/col only updates on full tile commits inside
+    // updateCitizenMovement, giving the cutaway natural hysteresis
+    // (the roof opens on entry, stays open until the NPC has fully
+    // stepped off the tile).
+    const occupied = new Set<string>();
+    for (const c of this.state.citizens) {
+      if (c.state === "DEAD") continue;
+      occupied.add(`${c.row},${c.col}`);
+    }
+
     for (const b of this.state.buildings) {
       const { sx, sy } = worldToIso(b.col, b.row, ts, rows);
       if (sx < minSx || sx > maxSx || sy < minSy || sy > maxSy) continue;
-      queue.push({
-        sortKey: b.row + b.col,
-        draw: () => this.drawSingleBuilding(b, sx, sy, ts),
-      });
+      const def = getBuildingDef(b.typeId);
+      const isLegacyCombined =
+        b.status === "rubble" || (def.category === "service" && b.typeId === "well");
+      if (isLegacyCombined) {
+        // Wells / rubble — single combined draw (no roof to fade).
+        queue.push({
+          sortKey: b.row + b.col,
+          draw: () => this.drawSingleBuilding(b, sx, sy, ts),
+        });
+      } else {
+        // Dollhouse three-layer split. The citizen entry below interleaves
+        // at sortKey + 0.01 so order on the same tile is:
+        //   floor (-0.10)  →  back (-0.05)  →  citizen (+0.01)  →  front+roof (+0.50)
+        const baseKey = b.row + b.col;
+        const x = sx - ts * 0.5;
+        const y = sy - ts * 0.6;
+        const roofAlpha = occupied.has(`${b.row},${b.col}`) ? 0.25 : 1.0;
+        queue.push({
+          sortKey: baseKey - 0.10,
+          draw: () => this.drawBuildingFloor(b, def, x, y, ts),
+        });
+        queue.push({
+          sortKey: baseKey - 0.05,
+          draw: () => this.drawBuildingBackStructure(b, def, x, y, ts),
+        });
+        queue.push({
+          sortKey: baseKey + 0.50,
+          draw: () => this.drawBuildingFrontAndRoof(b, def, x, y, ts, roofAlpha),
+        });
+      }
     }
 
     const tNow = performance.now() / 1000;
