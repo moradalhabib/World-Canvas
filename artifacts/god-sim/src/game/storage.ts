@@ -15,7 +15,7 @@ const SAVE_KEY = "god_sim_state";
 /** v1: terrain only. v2: + buildings + civilization. v3: + citizens.
  *  v4: + royal succession (nobleDissent, chronicle, lineage fields). */
 const CURRENT_VERSION = 4;
-const INITIAL_CITIZEN_COUNT = 3;
+const INITIAL_CITIZEN_COUNT = 6;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;
 const TILE_SIZE = 64;
@@ -72,7 +72,7 @@ export function createDefaultState(): GameState {
   };
   const civilization = createDefaultCivilization(grid);
   const citizens = spawnInitialCitizens(grid, civilization.founded, INITIAL_CITIZEN_COUNT);
-  return {
+  const state: GameState = {
     version: CURRENT_VERSION,
     camera: { x: 0, y: 0, zoom: 1 },
     time: {
@@ -86,7 +86,15 @@ export function createDefaultState(): GameState {
     buildings: [],
     civilization,
     citizens,
+    nobleDissent: "LOW",
+    chronicle: [],
+    lastRoyalYearTicked: 1,
+    dayNight: "day",
+    lastDayNightFlipMonth: 1,
   };
+  // Phase 3B: anoint the founding King + Queen and write the first chronicle.
+  anointInitialKing(state);
+  return state;
 }
 
 export function compressTiles(tiles: Tile[][]): string {
@@ -139,6 +147,9 @@ interface SerializedState {
   buildings: Building[];
   civilization: CivilizationState;
   citizens?: Citizen[];
+  nobleDissent?: GameState["nobleDissent"];
+  chronicle?: ChronicleEntry[];
+  lastRoyalYearTicked?: number;
 }
 
 export function saveState(state: GameState): void {
@@ -157,6 +168,9 @@ export function saveState(state: GameState): void {
       buildings: state.buildings,
       civilization: state.civilization,
       citizens: state.citizens,
+      nobleDissent: state.nobleDissent,
+      chronicle: state.chronicle,
+      lastRoyalYearTicked: state.lastRoyalYearTicked,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(serialized));
   } catch (e) {
@@ -170,25 +184,25 @@ export function loadState(): GameState | null {
     if (!raw) return null;
     const s: SerializedState = JSON.parse(raw);
 
-    // v3 is current. We migrate from v2 (no citizens) by spawning fresh
-    // citizens at the existing town center. Older versions are discarded.
-    if (s.version !== CURRENT_VERSION && s.version !== 2) return null;
+    // v4 is current. We migrate from v2 (no citizens) and v3 (no royalty).
+    // Older versions are discarded.
+    if (s.version !== CURRENT_VERSION && s.version !== 2 && s.version !== 3) return null;
 
     const tiles = decompressTiles(s.tilesData, s.gridMeta.rows, s.gridMeta.cols);
     const grid = { ...s.gridMeta, tiles };
     const civilization = s.civilization;
 
     let citizens: Citizen[];
-    if (s.version === CURRENT_VERSION && Array.isArray(s.citizens)) {
+    if ((s.version === CURRENT_VERSION || s.version === 3) && Array.isArray(s.citizens)) {
       // Backfill any fields added in mid-version code changes (e.g. faith,
-      // crisisTimer) so save data from earlier dev builds keeps working.
+      // crisisTimer, royalty fields) so save data from earlier dev builds keeps working.
       citizens = normalizeCitizens(s.citizens);
     } else {
-      // v2 → v3 migration: spawn fresh citizens around the existing town.
+      // v2 → v4 migration: spawn fresh citizens around the existing town.
       citizens = spawnInitialCitizens(grid, civilization.founded, INITIAL_CITIZEN_COUNT);
     }
 
-    return {
+    const state: GameState = {
       version: CURRENT_VERSION,
       camera: s.camera,
       time: s.time,
@@ -196,7 +210,19 @@ export function loadState(): GameState | null {
       buildings: s.buildings ?? [],
       civilization,
       citizens,
+      nobleDissent: s.nobleDissent ?? "LOW",
+      chronicle: s.chronicle ?? loadChronicle(),
+      lastRoyalYearTicked: s.lastRoyalYearTicked ?? s.time.gameYear,
+      dayNight: "day",
+      lastDayNightFlipMonth: s.time.gameYear * 12 + s.time.gameMonth,
     };
+
+    // v3 → v4: no monarch existed. Anoint the existing population.
+    if (s.version === 3 || s.version === 2) {
+      anointInitialKing(state);
+    }
+
+    return state;
   } catch (e) {
     console.warn("Failed to load state:", e);
     return null;

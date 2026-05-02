@@ -6,7 +6,16 @@ import type {
   Grid,
 } from "./types";
 import { findPath, isWalkable } from "./pathfinding";
-import { notifyDeath, pickName, pickSex } from "./royalty";
+import {
+  ELDER_AGE,
+  ADULT_AGE,
+  ageOf,
+  getLifeStage,
+  notifyDeath,
+  pickName,
+  pickSex,
+  addChronicle,
+} from "./royalty";
 
 /* -------------------------------------------------------------------------- */
 /*  Tunables                                                                  */
@@ -60,6 +69,8 @@ export function createCitizen(
     // Default to "born this year" for newborns; spawnInitialCitizens overrides
     // the founders so they start as adults.
     birthYear: opts.birthYear ?? 1,
+    safety: 100,
+    vanity: 0,
   };
 }
 

@@ -26,6 +26,9 @@ import { createCitizen } from "./npc";
 /* -------------------------------------------------------------------------- */
 
 export const ADULT_AGE = 18;
+export const ELDER_AGE = 60;
+export const VENERABLE_AGE = 75;                    // Phase 6: per-tick death chance kicks in
+export const VENERABLE_DEATH_CHANCE = 0.18;         // Phase 6: per game-year roll past age 75
 export const NATURAL_DEATH_AGE = 60;
 export const NATURAL_DEATH_AGE_JITTER = 18;          // dies between 60–78
 const ROYAL_FERTILITY_INTERVAL_YEARS = 10;
@@ -34,6 +37,11 @@ const QUEEN_MIN_AGE = 18;
 const QUEEN_MAX_AGE = 40;
 const CHRONICLE_CAP = 200;
 const CHRONICLE_KEY = "god_sim_chronicle";
+
+/* ---- Phase 6: Civilian reproduction tunables ---- */
+const CIVILIAN_BREED_FOOD_PER_PERSON = 4;            // bread/person threshold
+const CIVILIAN_BREED_CHANCE = 0.4;                   // per qualifying year
+const CIVILIAN_BREED_MAX_PER_YEAR = 2;               // hard cap so it doesn't snowball
 
 /* -------------------------------------------------------------------------- */
 /*  Names                                                                     */
@@ -98,6 +106,14 @@ export function loadChronicle(): ChronicleEntry[] {
 
 export function ageOf(c: Citizen, currentYear: number): number {
   return Math.max(0, currentYear - c.birthYear);
+}
+
+/** Phase 6: Map an NPC's age to a discrete life stage. */
+export function getLifeStage(c: Citizen, currentYear: number): "child" | "adult" | "elder" {
+  const age = ageOf(c, currentYear);
+  if (age < ADULT_AGE) return "child";
+  if (age >= ELDER_AGE) return "elder";
+  return "adult";
 }
 
 export function findKing(citizens: Citizen[]): Citizen | undefined {
@@ -246,6 +262,48 @@ export function tickHeirDuties(
 /* -------------------------------------------------------------------------- */
 
 /**
+ * Phase 6: Rebellion coronation. If the realm is in a Civil War (HIGH dissent)
+ * and at least one rebel survives, the wealthiest rebel (Vanity = personal
+ * gold) seizes the crown. Returns true if a coronation happened.
+ */
+export function tryRebellionCoronation(state: GameState, deadMonarch: Citizen): boolean {
+  if (state.nobleDissent !== "HIGH") return false;
+  const rebels = state.citizens.filter(
+    (c) => c.isRebel && c.state !== "DEAD" && c.id !== deadMonarch.id
+  );
+  if (rebels.length === 0) return false;
+
+  // Pick the rebel with the highest Vanity (gold accumulated through theft).
+  rebels.sort((a, b) => (b.vanity ?? 0) - (a.vanity ?? 0));
+  const newKing = rebels[0];
+
+  // Strip rebel flag, anoint as King, give crown sprite (via socialTier).
+  newKing.isRebel = false;
+  newKing.isKing = true;
+  newKing.socialTier = "king";
+  newKing.state = "IDLE";
+  newKing.path = [];
+  newKing.pathIndex = 0;
+  newKing.targetTile = undefined;
+  newKing.targetBuildingId = undefined;
+
+  // Demote any other rebels — civil war is over, dynasty resets.
+  for (const r of rebels) {
+    if (r.id !== newKing.id) {
+      r.isRebel = false;
+      // Don't reset their state; they go back to whatever they were doing.
+    }
+  }
+
+  state.nobleDissent = "LOW";
+  addChronicle(
+    state,
+    `A new dynasty begins! The rebel ${newKing.name} seizes the crown by force after the fall of ${deadMonarch.name}.`
+  );
+  return true;
+}
+
+/**
  * Triggered from the death() event when the dying citizen was the King.
  *  - Adult heir present  → he becomes the new King.
  *  - Minor heir present  → spouse becomes Dowager Queen regent, dissent → HIGH.
@@ -253,6 +311,9 @@ export function tickHeirDuties(
  *                          the throne sits empty.
  */
 export function succession(state: GameState, deadKing: Citizen): void {
+  // Phase 6: A successful rebellion overrides all dynastic succession rules.
+  if (tryRebellionCoronation(state, deadKing)) return;
+
   const currentYear = state.time.gameYear;
   const heirs = findHeirs(state.citizens).sort(
     (a, b) => ageOf(b, currentYear) - ageOf(a, currentYear)
@@ -336,12 +397,16 @@ export function tickYear(
   for (const c of state.citizens) {
     if (c.state === "DEAD") continue;
     const age = ageOf(c, year);
-    // Probabilistic natural death past the threshold.
+    // Phase 6: Two-tier death model.
+    //   age 60–78: legacy probabilistic death window
+    //   age >= 75: per-tick venerable death roll (spec: "random chance each tick")
     const deathFloor = NATURAL_DEATH_AGE;
     const deathCeil = NATURAL_DEATH_AGE + NATURAL_DEATH_AGE_JITTER;
     let dies = false;
     if (age >= deathCeil) {
       dies = true;
+    } else if (age >= VENERABLE_AGE) {
+      dies = Math.random() < VENERABLE_DEATH_CHANCE;
     } else if (age >= deathFloor) {
       const overshoot = (age - deathFloor) / (deathCeil - deathFloor);
       dies = Math.random() < overshoot * 0.5;
@@ -373,10 +438,72 @@ export function tickYear(
   // adult heir doesn't get re-pathed to themselves.
   tickHeirDuties(state, grid, buildings, civ);
   tryRoyalReproduction(state);
+  // Phase 6: Civilian breeding keeps the workforce alive when food is plentiful.
+  tryCivilianReproduction(state, buildings);
 
   // Safety net: if there's no King but there are eligible adults, anoint one.
   if (!findKing(state.citizens)) {
     anointInitialKing(state);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Phase 6: Civilian reproduction                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * If food is plentiful and there's residential capacity to spare, spawn a
+ * Child to a pair of adult NPCs. Capped per year so a great harvest doesn't
+ * explode the population.
+ */
+export function tryCivilianReproduction(state: GameState, buildings: Building[]): void {
+  const civ = state.civilization;
+  const adults = state.citizens.filter(
+    (c) =>
+      c.state !== "DEAD" &&
+      ageOf(c, state.time.gameYear) >= ADULT_AGE &&
+      ageOf(c, state.time.gameYear) < ELDER_AGE
+  );
+  if (adults.length < 2) return;
+
+  // Food check: bread plus wheat as a buffer per person.
+  const foodPerPerson =
+    (civ.resources.bread + civ.resources.wheat * 0.5) /
+    Math.max(1, state.citizens.filter((c) => c.state !== "DEAD").length);
+  if (foodPerPerson < CIVILIAN_BREED_FOOD_PER_PERSON) return;
+
+  // Housing check: total housing > living population.
+  let totalHousing = 0;
+  for (const b of buildings) {
+    if (b.typeId === "house_free") totalHousing += 4;
+    else if (b.typeId === "house_middle") totalHousing += 6;
+    else if (b.typeId === "house_high") totalHousing += 8;
+  }
+  const living = state.citizens.filter((c) => c.state !== "DEAD").length;
+  if (totalHousing <= living) return;
+
+  for (let i = 0; i < CIVILIAN_BREED_MAX_PER_YEAR; i++) {
+    if (Math.random() > CIVILIAN_BREED_CHANCE) continue;
+    // Pick two random adults of opposite sex (best effort).
+    const males = adults.filter((c) => c.sex === "male");
+    const females = adults.filter((c) => c.sex === "female");
+    if (males.length === 0 || females.length === 0) return;
+    const father = males[Math.floor(Math.random() * males.length)];
+    const mother = females[Math.floor(Math.random() * females.length)];
+
+    const sex = pickSex();
+    const baby = createCitizen(
+      mother.row,
+      mother.col,
+      Math.floor(Math.random() * 360),
+      "peasant",
+      { birthYear: state.time.gameYear, sex, name: pickName(sex) }
+    );
+    state.citizens.push(baby);
+    addChronicle(
+      state,
+      `A child, ${baby.name}, is born to ${father.name} and ${mother.name}.`
+    );
   }
 }
 

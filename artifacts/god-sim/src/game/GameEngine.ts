@@ -21,6 +21,7 @@ import {
   tickCitizenMonth,
   updateCitizenMovement,
 } from "./npc";
+import { tickYear as tickRoyalYear } from "./royalty";
 
 const MAX_ZOOM = 4.0;
 const SAVE_INTERVAL_MS = 10_000;
@@ -160,8 +161,39 @@ export class GameEngine {
     // Phase 3: tick each citizen's brain — hunger rises, crisis branch fires
     // (PRAYING / ROGUE), the death timer counts down, and SEEK_FOOD/ROGUE
     // citizens replan their A* path when they don't already have one.
+    // Pass the full state so starvation deaths can trigger royal succession.
     for (const c of this.state.citizens) {
-      tickCitizenMonth(c, this.state.grid, this.state.buildings, this.state.civilization);
+      tickCitizenMonth(
+        c,
+        this.state.grid,
+        this.state.buildings,
+        this.state.civilization,
+        this.state
+      );
+    }
+
+    // Phase 3B: once per game-year, run aging, natural death, heir maturity
+    // and royal reproduction. We compare to lastRoyalYearTicked rather than
+    // gating on month==1 so offline catch-up runs the right number of years.
+    if (this.state.time.gameYear !== this.state.lastRoyalYearTicked) {
+      const target = this.state.time.gameYear;
+      // Cap the catch-up loop in case of a huge offline gap.
+      let safety = 0;
+      while (this.state.lastRoyalYearTicked < target && safety < 200) {
+        this.state.lastRoyalYearTicked++;
+        // Use the engine's notion of "now" so chronicles get the right year.
+        const realYear = this.state.time.gameYear;
+        this.state.time.gameYear = this.state.lastRoyalYearTicked;
+        tickRoyalYear(
+          this.state,
+          this.state.grid,
+          this.state.buildings,
+          this.state.civilization
+        );
+        this.state.time.gameYear = realYear;
+        safety++;
+      }
+      this.state.lastRoyalYearTicked = target;
     }
   }
 

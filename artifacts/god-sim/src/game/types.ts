@@ -47,6 +47,10 @@ export interface GameState {
   chronicle: ChronicleEntry[];
   /** Phase 3B: Last year aging/reproduction tick was processed (so we run once per game-year). */
   lastRoyalYearTicked: number;
+  /** Phase 6: Day/Night cycle. 1 game-month = day, next = night, alternating. */
+  dayNight: "day" | "night";
+  /** Phase 6: Last absolute month (year*12+month) at which the day/night phase flipped. */
+  lastDayNightFlipMonth: number;
 }
 
 export const TILE_COLORS: Record<TileType, string> = {
@@ -227,7 +231,11 @@ export type CitizenState =
   | "ROGUE"
   | "DEAD"
   | "WORKING"
-  | "MINISTERING";
+  | "MINISTERING"
+  | "SLEEPING"
+  | "REBEL";
+
+export type LifeStage = "child" | "adult" | "elder";
 
 export type DissentLevel = "LOW" | "MEDIUM" | "HIGH";
 
@@ -283,6 +291,16 @@ export interface Citizen {
   spouseId?: string;
   /** Year this NPC died (set when state becomes DEAD). */
   deathYear?: number;
+
+  /* -- Phase 6: Lifecycle, Safety, Vanity, Rebellion -- */
+  /** 0..100 Safety stat. Drops when sleeping outside; low → higher rogue/rebel chance. */
+  safety: number;
+  /** Personal gold/wealth accumulated (used to pick the rebel king). */
+  vanity: number;
+  /** Active rebel during civil war — eligible to seize the crown. */
+  isRebel?: boolean;
+  /** Building id of the home this NPC last slept in (sticky). */
+  homeBuildingId?: string;
 }
 
 /* ── Phase 3B: Chronicle entries ── */
