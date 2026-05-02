@@ -249,8 +249,12 @@ export class GameEngine {
       const founded = this.state.civilization.founded;
       const focusX = founded.col * grid.tileSize + grid.tileSize / 2;
       const focusY = founded.row * grid.tileSize + grid.tileSize / 2;
-      // Pick a comfortable mid-range zoom that shows ~20 tiles across
-      const targetZoom = Math.min(MAX_ZOOM, this.viewW / (20 * grid.tileSize));
+      // Pick a comfortable mid-range zoom that shows ~10 tiles across so
+      // NPCs are clearly visible at default. (Was /20 — sprites were tiny in
+      // the 606px-wide canvas iframe; halving the tile-count doubles the
+      // perceived NPC size without overscaling on a desktop viewport since
+      // MAX_ZOOM=4.0 still caps it.)
+      const targetZoom = Math.min(MAX_ZOOM, this.viewW / (10 * grid.tileSize));
       this.state.camera.zoom = Math.max(this.minZoom, targetZoom);
       this.state.camera.x = focusX - this.viewW / (2 * this.state.camera.zoom);
       this.state.camera.y = focusY - this.viewH / (2 * this.state.camera.zoom);

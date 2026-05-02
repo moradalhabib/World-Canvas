@@ -302,18 +302,12 @@ export function loadState(): GameState | null {
       if ((res.bread ?? 0) < 60) res.bread = 60;
       // Force-recenter camera on the founded tile at a comfortable zoom so
       // citizens that had wandered are visible immediately on next render.
-      const founded = state.civilization.founded;
-      const ts = state.grid.tileSize;
-      const focusX = founded.col * ts + ts / 2;
-      const focusY = founded.row * ts + ts / 2;
-      // Note: viewW/viewH not known here (engine sets them on init). We just
-      // place the camera so the focus point is at world origin offset; the
-      // engine's clampCamera() runs after construction and will keep it sane.
-      // Use a reasonable default zoom (1.5x) — engine's first frame will not
-      // override because (x,y,zoom) are no longer all defaults.
-      state.camera.zoom = 1.5;
-      state.camera.x = focusX - 400;
-      state.camera.y = focusY - 300;
+      // Reset to (0,0,1) so the engine's init-block detects "default camera"
+      // and re-runs its targetZoom formula — that formula now shows ~10 tiles
+      // across (NPCs ~2x bigger than the old /20 setting).
+      state.camera.zoom = 1;
+      state.camera.x = 0;
+      state.camera.y = 0;
     }
 
     return state;
