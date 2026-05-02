@@ -1,0 +1,24 @@
+Project Update: Phase 10 Implementation - Transition to Asset-Based Isometric Rendering
+Acknowledge this prompt. We are replacing the previous vector drawing and procedural logic with a high-fidelity, image-based visual engine targeting the look and feel of image_3.png (Textured Isometric Pixel Art with Unique NPCs). Perform this overhaul while keeping all sociopolitical and lineage logic (from Phase 1 to Phase 9) functional.
+
+1. The Asset & Sprite Infrastructure: Implement a single 'Sprite Atlas' image loader. Load all visual assets (Textured Terrain, Isometric Buildings, Modular NPC Parts) from optimized source images. Define a comprehensive AssetsMap within the code to map asset names (e.g., 'KingHead_SilverBeard', 'FarmerHoe') to their x/y pixel coordinates in the single atlas image.
+
+2. Modular NPC Compositor (Goal: Ultimate Uniqueness): Replace the native primitive drawNPC code with a robust compositeNPCSprite(id, socialClass, trait, profession, age, gender) function. This function must assemble a character by sequentially drawing modular sprite layers (Skin Tone -> Torso/Tunic -> Head/Hair/Beard -> Profession Accessory) using the AssetsMap.
+
+3. Performance Optimization (Caching):
+
+Use separate, persistent canvas layers for Static Terrain (Texture Maps), Static Buildings, and Dynamic Entities (NPCs) to minimize redundant draws.
+
+Implement Composited Sprite Caching: When a unique NPC ID is initialized, or its visuals update (due to trait/class change or aging), pre-render its complete, composited sprite to a unique offscreenBuffer canvas. Use this single buffer to draw the NPC in the main loop, drastically reducing draw calls.
+
+4. Deep Logic Integration (What else to add):
+
+Skill Mastery: In compositeNPCSprite, if the NPC's profession skill level is 10 (Master), add a requirement to the modular stack logic to use a unique, high-value visual accessory (e.g., the visible 'Gold Hoe' or 'Diamond Pickaxe' texture) derived from the updated assets.
+
+Trait Visualization: Integrate Trait enums: A 'Zealot' must composite with a visual Cross/Holy symbol; a 'Greedy' NPC must composite with a distinct large coin purse texture.
+
+Day/Night: Keep the loop logic but update the rendering: During Day, apply a soft dynamic shadow layer (globalAlpha=0.1) cast from isometric buildings. During Night, apply a deep blue/purple color filter overlay to the dynamic entity layer.
+
+5. Performance Verification (FPS Counter): Implement a simple, unobtrusive FPS (Frames Per Second) counter in the top HUD, positioned near the Year/Month. This ensures we can measure the success of the offscreen caching optimizations on mobile.
+
+Instruction: Confirm understanding. Provide the updated JavaScript, HTML, and CSS to transition to this asset-driven, high-fidelity rendering architecture. Pay special attention to optimization check for mobile browser performance.
