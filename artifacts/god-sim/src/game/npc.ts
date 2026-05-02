@@ -2,9 +2,11 @@ import type {
   Building,
   Citizen,
   CivilizationState,
+  GameState,
   Grid,
 } from "./types";
 import { findPath, isWalkable } from "./pathfinding";
+import { notifyDeath, pickName, pickSex } from "./royalty";
 
 /* -------------------------------------------------------------------------- */
 /*  Tunables                                                                  */
@@ -36,8 +38,10 @@ export function createCitizen(
   row: number,
   col: number,
   hue: number,
-  socialTier: Citizen["socialTier"] = "peasant"
+  socialTier: Citizen["socialTier"] = "peasant",
+  opts: { birthYear?: number; sex?: Citizen["sex"]; name?: string } = {}
 ): Citizen {
+  const sex = opts.sex ?? pickSex();
   return {
     id: nextId(),
     row,
@@ -51,6 +55,11 @@ export function createCitizen(
     crisisTimer: 0,                               // spec: crisisTimer starts at 0
     hue,
     socialTier,
+    name: opts.name ?? pickName(sex),
+    sex,
+    // Default to "born this year" for newborns; spawnInitialCitizens overrides
+    // the founders so they start as adults.
+    birthYear: opts.birthYear ?? 1,
   };
 }
 
@@ -80,7 +89,14 @@ export function spawnInitialCitizens(
         // First citizen is the King; ~15% of remainder are Nobles; rest peasants.
         const tier: Citizen["socialTier"] =
           out.length === 0 ? "king" : Math.random() < 0.15 ? "noble" : "peasant";
-        out.push(createCitizen(r, c, hue, tier));
+        // Founders start as adults — the King ~30, others 18-45 — so the
+        // succession engine has a viable population from year 1.
+        const founderAge =
+          out.length === 0 ? 30 : 18 + Math.floor(Math.random() * 28);
+        const birthYear = 1 - founderAge; // current gameYear is 1 at world start
+        // Force first founder male so the auto-anointed monarch is a King by name.
+        const sex: Citizen["sex"] | undefined = out.length === 0 ? "male" : undefined;
+        out.push(createCitizen(r, c, hue, tier, { birthYear, sex }));
       }
     }
   }
@@ -107,6 +123,10 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
     if (c.socialTier !== "king" && c.socialTier !== "noble" && c.socialTier !== "peasant") {
       c.socialTier = "peasant";
     }
+    // Phase 3B backfill — older saves predate the lineage engine.
+    if (c.sex !== "male" && c.sex !== "female") c.sex = pickSex();
+    if (typeof c.name !== "string" || c.name.length === 0) c.name = pickName(c.sex);
+    if (typeof c.birthYear !== "number") c.birthYear = 1;
     // Legacy state values that no longer exist map to IDLE
     const validStates = new Set([
       "IDLE",
@@ -116,6 +136,7 @@ export function normalizeCitizens(citizens: Citizen[]): Citizen[] {
       "ROGUE",
       "DEAD",
       "WORKING",
+      "MINISTERING",
     ]);
     if (!validStates.has(c.state as string)) c.state = "IDLE";
   }
@@ -193,7 +214,8 @@ export function tickCitizenMonth(
   citizen: Citizen,
   grid: Grid,
   buildings: Building[],
-  civ: CivilizationState
+  civ: CivilizationState,
+  state?: GameState
 ): void {
   // --- 1. DEAD: completely inert -------------------------------------------
   if (citizen.state === "DEAD") return;
@@ -209,6 +231,8 @@ export function tickCitizenMonth(
       citizen.progress = 0;
       citizen.targetTile = undefined;
       citizen.targetBuildingId = undefined;
+      // Notify royal succession if a monarch just fell.
+      if (state) notifyDeath(state, citizen);
       return;
     }
     // ROGUE: if they have no active path (target gone, etc.), try to repath.
