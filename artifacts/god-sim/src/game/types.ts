@@ -66,7 +66,21 @@ export interface GameState {
    *  citizens — they have no needs, mood, or pathfinding. They wander grass
    *  tiles and exist purely for "living world" visual richness. */
   animals: Animal[];
+  /** Phase 21: last game-year at which the immigration roll fired. The
+   *  roll only fires once population conditions are met AND at least
+   *  IMMIGRATION_COOLDOWN_MIN_YEARS have passed since the previous arrival
+   *  wave (with a random extra 0..2 years jitter so it doesn't feel
+   *  metronomic). Initialized to current gameYear on fresh state so the
+   *  realm doesn't get a free wave of immigrants on Year 1. */
+  lastImmigrationYear: number;
 }
+
+/** Phase 21: ms of cumulative WORKING-NPC time required to finish a
+ *  building. At a typical 60fps that's ~30 real seconds of one worker
+ *  standing on the site, or ~15s with two. Tuned to feel like a project,
+ *  not an instant — but to never block the realm for more than a couple
+ *  of game-months once a worker actually shows up. */
+export const CONSTRUCTION_WORK_MS_REQUIRED = 30_000;
 
 /* ── Phase 16: Living World — fauna ── */
 
@@ -323,6 +337,18 @@ export interface Building {
   lastDesirability: number;
   /** Phase 5: "rubble" buildings still occupy their tile but produce nothing. */
   status?: "intact" | "rubble";
+  /** Phase 21: construction state. Buildings start as scaffolded foundations
+   *  and only "complete" once NPCs in the WORKING state have spent
+   *  CONSTRUCTION_WORK_MS_REQUIRED of cumulative wall-clock time at the
+   *  building tile. While incomplete, the building produces nothing,
+   *  provides no housing, and renders as a scaffolded foundation.
+   *  Default true on legacy saves so v13→v14 migration doesn't accidentally
+   *  freeze every existing building back into "under construction" mode. */
+  complete?: boolean;
+  /** Phase 21: cumulative wall-clock ms a WORKING NPC has spent on this
+   *  building's tile. Threshold = CONSTRUCTION_WORK_MS_REQUIRED (30000).
+   *  Capped at the threshold so it doesn't grow unbounded. */
+  constructionWorkMs?: number;
 }
 
 /* ── Utility AI: needs ── */

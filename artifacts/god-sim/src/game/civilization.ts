@@ -100,6 +100,13 @@ export function tickCivilizationMonth(
     // Phase 5: rubble produces nothing, consumes nothing, pays no tax — but
     // its tile is still occupied by the wreck.
     if (b.status === "rubble") continue;
+    // Phase 21: incomplete (scaffolded) buildings produce nothing, consume
+    // nothing, pay no tax, and contribute zero housing. They become live
+    // economic entities only when the per-frame construction accumulator
+    // flips `complete` to true. Skipping them entirely (vs. zero-output)
+    // also keeps `def.satisfies` from leaking civic need credit while a
+    // chapel is mid-build.
+    if (b.complete === false) continue;
 
     const def = getBuildingDef(b.typeId);
 

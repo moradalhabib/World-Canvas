@@ -27,7 +27,16 @@ import type { CitizenTrait } from "./types";
 /*  Tunables                                                                  */
 /* -------------------------------------------------------------------------- */
 
-export const ADULT_AGE = 18;
+/**
+ * Phase 21: Aging accelerated to a Townsmen-style fast generational pace —
+ * infants 0..2, children 2..5, adults 5..60, elders 60+. The previous
+ * ADULT_AGE = 18 made dynasties move on real-time decade timescales; the
+ * Phase 21 spec ("creative god-sim pacing, see lineages turn over") wants
+ * children to mature into a working/marriageable adult after just three
+ * game-years as a child. ELDER_AGE stays at 60 so the working-adult arc
+ * is the longest stage (~55 game-years).
+ */
+export const ADULT_AGE = 5;
 export const ELDER_AGE = 60;
 export const VENERABLE_AGE = 75;                    // Phase 6: per-tick death chance kicks in
 export const VENERABLE_DEATH_CHANCE = 0.18;         // Phase 6: per game-year roll past age 75
@@ -567,11 +576,98 @@ export function tickYear(
   tryRoyalReproduction(state);
   // Phase 6: Civilian breeding keeps the workforce alive when food is plentiful.
   tryCivilianReproduction(state, buildings);
+  // Phase 21: Immigration. Once the realm reaches a high average mood and the
+  // cooldown has elapsed, a small group of Grade-1 peasants arrives at the
+  // map edge. Logged once: "Travelers drawn by our prosperity have arrived."
+  tryImmigration(state, buildings);
 
   // Safety net: if there's no King but there are eligible adults, anoint one.
   if (!findKing(state.citizens)) {
     anointInitialKing(state);
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Phase 21: Immigration                                                     */
+/* -------------------------------------------------------------------------- */
+
+/** Phase 21 immigration tunables. */
+const IMMIGRATION_COOLDOWN_MIN_YEARS = 3;
+const IMMIGRATION_COOLDOWN_JITTER_YEARS = 2; // total range 3..5 years
+const IMMIGRATION_MOOD_THRESHOLD = 80;
+const IMMIGRATION_MIN_PEASANTS = 1;
+const IMMIGRATION_MAX_PEASANTS = 3;
+
+/**
+ * Phase 21: Once every 3-5 years, if the average mood across all living
+ * citizens is above 80, spawn 1-3 Grade-1 peasants at a random grass tile
+ * on the map edge. Logs a single Chronicle entry per wave. The cooldown
+ * is sampled deterministically from `lastImmigrationYear` so a rapid
+ * succession of high-mood years can't trigger every year.
+ */
+export function tryImmigration(state: GameState, buildings: Building[]): void {
+  const year = state.time.gameYear;
+  const elapsed = year - state.lastImmigrationYear;
+
+  // Deterministic per-window jitter (0..2 extra years) so the cooldown
+  // varies but doesn't re-roll every tick.
+  const jitter =
+    Math.floor((state.lastImmigrationYear * 31337) % (IMMIGRATION_COOLDOWN_JITTER_YEARS + 1));
+  const required = IMMIGRATION_COOLDOWN_MIN_YEARS + jitter;
+  if (elapsed < required) return;
+
+  // Mood gate — happy realms attract migrants.
+  const living = state.citizens.filter((c) => c.state !== "DEAD");
+  if (living.length === 0) return;
+  const avgMood = living.reduce((s, c) => s + (c.mood ?? 0), 0) / living.length;
+  if (avgMood < IMMIGRATION_MOOD_THRESHOLD) return;
+
+  // Pick a random spawn tile on the four map edges (grass only, so we
+  // don't drop peasants in the middle of an ocean or on a mountain).
+  // Also exclude tiles already occupied by a building or an animal so
+  // immigrants don't materialize inside a wall or on top of a wolf.
+  const { rows, cols, tiles } = state.grid;
+  const occupied = new Set<string>();
+  for (const b of buildings) occupied.add(`${b.row},${b.col}`);
+  for (const a of state.animals ?? []) occupied.add(`${a.row},${a.col}`);
+  const candidates: { row: number; col: number }[] = [];
+  const tryAdd = (r: number, c: number) => {
+    if (tiles[r]?.[c]?.type !== "grass") return;
+    if (occupied.has(`${r},${c}`)) return;
+    candidates.push({ row: r, col: c });
+  };
+  for (let c = 0; c < cols; c++) {
+    tryAdd(0, c);
+    tryAdd(rows - 1, c);
+  }
+  for (let r = 0; r < rows; r++) {
+    tryAdd(r, 0);
+    tryAdd(r, cols - 1);
+  }
+  if (candidates.length === 0) return;
+
+  const count =
+    IMMIGRATION_MIN_PEASANTS +
+    Math.floor(Math.random() * (IMMIGRATION_MAX_PEASANTS - IMMIGRATION_MIN_PEASANTS + 1));
+
+  for (let i = 0; i < count; i++) {
+    const spawn = candidates[Math.floor(Math.random() * candidates.length)];
+    // Spawn as already-adult peasants (birthYear backdated past ADULT_AGE)
+    // so the new arrivals can immediately work + breed. Random age in the
+    // young-adult band so they have decades of life ahead of them.
+    const ageOnArrival = ADULT_AGE + Math.floor(Math.random() * 10);
+    const peasant = createCitizen(
+      spawn.row,
+      spawn.col,
+      Math.floor(Math.random() * 360),
+      "peasant",
+      { birthYear: year - ageOnArrival }
+    );
+    state.citizens.push(peasant);
+  }
+
+  addChronicle(state, "Travelers drawn by our prosperity have arrived.");
+  state.lastImmigrationYear = year;
 }
 
 /* -------------------------------------------------------------------------- */

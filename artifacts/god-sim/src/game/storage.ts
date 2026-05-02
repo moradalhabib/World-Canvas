@@ -103,7 +103,16 @@ const SAVE_KEY = "god_sim_state";
  *        animal identity. Older saves go through spawnInitialAnimals
  *        directly with both sheep and wolf counts.
  */
-const CURRENT_VERSION = 13;
+/**
+ *  v14: + Phase 21 Masterpiece Integration — adds Building.complete /
+ *        constructionWorkMs (scaffolded construction) and
+ *        GameState.lastImmigrationYear. Migration backfills every legacy
+ *        building to complete:true (so existing realms don't freeze every
+ *        structure back to "under construction" on upgrade) and sets
+ *        lastImmigrationYear to the current gameYear (so older saves
+ *        don't get a free immigrant wave the moment they load).
+ */
+const CURRENT_VERSION = 14;
 const INITIAL_CITIZEN_COUNT = 6;
 const GRID_COLS = 100;
 const GRID_ROWS = 100;
@@ -189,6 +198,10 @@ export function createDefaultState(): GameState {
     lastWeatherRollMonth: 1,
     // Phase 16/17: seed 10 sheep + 4 wolves on grass/forest tiles.
     animals: spawnInitialAnimals(grid, 10, 4),
+    // Phase 21: anchor immigration cooldown to the founding year so the
+    // realm doesn't get a free immigrant wave on Year 1 before the
+    // founders have proven anything.
+    lastImmigrationYear: 1,
   };
   // Phase 3B: anoint the founding King + Queen and write the first chronicle.
   anointInitialKing(state);
@@ -257,6 +270,8 @@ interface SerializedState {
   lastWeatherRollMonth?: number;
   /* Phase 16 */
   animals?: Animal[];
+  /* Phase 21 */
+  lastImmigrationYear?: number;
 }
 
 /** Phase 13: deterministic season from game month (Mar-May Spring, etc.). */
@@ -409,7 +424,21 @@ export function loadState(): GameState | null {
             ? [...s.animals, ...spawnInitialAnimals(grid, 0, 4)]
             : s.animals)
         : spawnInitialAnimals(grid, 10, 4),
+      // Phase 21 backfill — anchor the immigration cooldown to the save's
+      // current year so older realms don't get a free wave the instant
+      // they load. Saves that already have the field keep it.
+      lastImmigrationYear: s.lastImmigrationYear ?? s.time.gameYear,
     };
+
+    // Phase 21 backfill — every pre-v14 building was implicitly complete.
+    // Without this stamp, the new construction-gated production loop would
+    // freeze every existing farm/mine/house back into "scaffolded" mode.
+    if ((s.version ?? 0) < 14) {
+      for (const b of state.buildings) {
+        if (b.complete === undefined) b.complete = true;
+        if (b.constructionWorkMs === undefined) b.constructionWorkMs = 0;
+      }
+    }
 
     // v3 → v4: no monarch existed. Anoint the existing population.
     if (s.version === 3 || s.version === 2) {

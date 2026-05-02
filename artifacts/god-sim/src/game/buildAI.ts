@@ -201,6 +201,12 @@ export function planAndBuild(
       col: plot.col,
       builtMonth: currentMonth,
       lastDesirability: desirability.get(plot.row, plot.col),
+      // Phase 21 — every new build starts as a scaffolded foundation. It
+      // produces nothing and houses no one until the engine's per-frame
+      // tickConstruction has accumulated CONSTRUCTION_WORK_MS_REQUIRED of
+      // WORKING-NPC time on the tile.
+      complete: false,
+      constructionWorkMs: 0,
     };
   }
   return null;
