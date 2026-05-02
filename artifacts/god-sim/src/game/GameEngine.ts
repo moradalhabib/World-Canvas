@@ -232,6 +232,30 @@ export class GameEngine {
       }
       this.state.lastRoyalYearTicked = target;
     }
+
+    // Phase 6: Day/Night flip — alternates each in-game month. Triggers the
+    // sleep protocol on Night and wakes everyone on Day.
+    this.tickDayNight();
+  }
+
+  /**
+   * Phase 6: Each in-game month boundary, toggle the day/night phase.
+   * Entering Night runs the Sleep Protocol (NPCs path home, homeless lose
+   * Safety). Entering Day wakes everyone.
+   */
+  private tickDayNight() {
+    const absoluteMonth =
+      this.state.time.gameYear * 12 + this.state.time.gameMonth;
+    if (absoluteMonth === this.state.lastDayNightFlipMonth) return;
+
+    if (this.state.dayNight === "day") {
+      this.state.dayNight = "night";
+      processNightSleep(this.state, this.state.grid, this.state.buildings);
+    } else {
+      this.state.dayNight = "day";
+      processDayWake(this.state);
+    }
+    this.state.lastDayNightFlipMonth = absoluteMonth;
   }
 
   private buildBiomePatterns() {
@@ -633,6 +657,20 @@ export class GameEngine {
         c.state === "MOVING" || c.state === "SEEK_FOOD" || c.state === "ROGUE";
       const isDead = c.state === "DEAD";
 
+      // Phase 6: life-stage scale — children draw at 65%, elders at 90%,
+      // adults full size. Anchor at the feet (cx, cy + ts*0.32).
+      const lifeStage = getLifeStage(c, this.state.civilization.founded);
+      const lifeScale =
+        lifeStage === "child" ? 0.65 :
+        lifeStage === "elder" ? 0.9 : 1;
+      if (lifeScale !== 1) {
+        ctx.save();
+        const anchorY = cy + ts * 0.32;
+        ctx.translate(cx, anchorY);
+        ctx.scale(lifeScale, lifeScale);
+        ctx.translate(-cx, -anchorY);
+      }
+
       // Leg color matches body for cohesion
       const legColor =
         c.socialTier === "peasant" ? "#6E5440" :
@@ -660,6 +698,7 @@ export class GameEngine {
         ctx.fillRect(cx - legW - ts * 0.01, legY, legW, legH);
         ctx.fillRect(cx + ts * 0.01, legY, legW, legH);
         ctx.restore();
+        if (lifeScale !== 1) ctx.restore();
         continue;
       }
 
@@ -693,6 +732,8 @@ export class GameEngine {
         ctx.ellipse(cx, cy + ts * 0.32, radius * 1.2, radius * 0.45, 0, 0, Math.PI * 2);
         ctx.stroke();
       }
+
+      if (lifeScale !== 1) ctx.restore();
     }
   }
 
@@ -1109,6 +1150,12 @@ export class GameEngine {
 
     ctx.restore();
 
+    // Phase 6: night overlay — dark blue tint over the whole world.
+    if (this.state.dayNight === "night") {
+      ctx.fillStyle = "rgba(10, 14, 38, 0.45)";
+      ctx.fillRect(0, 0, W, H);
+    }
+
     // Pass 6: vignette overlay
     this.buildVignette();
     if (this.vignetteGradient) {
@@ -1117,8 +1164,152 @@ export class GameEngine {
     }
   }
 
+  /* -------------------------------------------------------------------- */
+  /*  Phase 4: Combat & particle effects                                  */
+  /* -------------------------------------------------------------------- */
+
+  /**
+   * Each frame, look for a Rebel and a Royalist within COMBAT_RADIUS_TILES
+   * who aren't already in combat. Lock both into COMBAT, start the timer,
+   * and emit sparks. When the timer hits 0, one combatant dies (King-killers
+   * get the chance to topple the throne via royalty.notifyDeath).
+   */
+  private tickCombat(dtMs: number) {
+    if (this.state.time.timeScale === 0) return;
+    const ts = this.state.grid.tileSize;
+    const all = this.state.citizens;
+
+    // 1) Pair up new combat encounters (only when civil war is hot).
+    if (this.state.nobleDissent === "HIGH") {
+      const rebels = all.filter(
+        (c) => c.faction === "rebel" && c.state !== "DEAD" && c.state !== "COMBAT"
+      );
+      const royals = all.filter(
+        (c) => c.faction === "royalist" && c.state !== "DEAD" && c.state !== "COMBAT"
+      );
+      for (const r of rebels) {
+        for (const g of royals) {
+          const dr = Math.abs(r.row - g.row);
+          const dc = Math.abs(g.col - r.col);
+          if (dr <= COMBAT_RADIUS_TILES && dc <= COMBAT_RADIUS_TILES) {
+            this.startCombat(r, g);
+            break;
+          }
+        }
+      }
+    }
+
+    // 2) Tick existing combats — emit sparks and resolve when timer expires.
+    const speed = this.state.time.timeScale;
+    for (const c of all) {
+      if (c.state !== "COMBAT") continue;
+      // Stop in place while fighting
+      c.path = [];
+      c.pathIndex = 0;
+      c.progress = 0;
+      c.combatTimer = (c.combatTimer ?? COMBAT_DURATION_MS) - dtMs * speed;
+
+      // Spark only from one side of the pair to avoid duplicates.
+      const opp = all.find((x) => x.id === c.combatOpponentId);
+      if (opp && c.id < opp.id) {
+        const midX = ((c.col + opp.col) / 2 + 0.5) * ts;
+        const midY = ((c.row + opp.row) / 2 + 0.5) * ts;
+        for (let i = 0; i < SPARKS_PER_FRAME; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 0.04 + Math.random() * 0.06; // px/ms
+          this.sparks.push({
+            x: midX,
+            y: midY,
+            vx: Math.cos(a) * sp * ts,
+            vy: Math.sin(a) * sp * ts - 0.02 * ts,
+            life: SPARK_LIFE_MS,
+            maxLife: SPARK_LIFE_MS,
+          });
+        }
+      }
+
+      if ((c.combatTimer ?? 0) <= 0) {
+        this.resolveCombat(c, opp);
+      }
+    }
+  }
+
+  private startCombat(a: Citizen, b: Citizen) {
+    a.state = "COMBAT";
+    b.state = "COMBAT";
+    a.combatTimer = COMBAT_DURATION_MS;
+    b.combatTimer = COMBAT_DURATION_MS;
+    a.combatOpponentId = b.id;
+    b.combatOpponentId = a.id;
+    addChronicle(this.state, `${a.name} (rebel) clashes with ${b.name} (royalist)!`);
+  }
+
+  private resolveCombat(a: Citizen, b: Citizen | undefined) {
+    // Roll a winner. Rebels lean on vanity (mercenary gold), Royalists on safety.
+    const aScore = (a.faction === "rebel" ? a.vanity : a.safety) + Math.random() * 30;
+    const bScore = b
+      ? (b.faction === "rebel" ? b.vanity : b.safety) + Math.random() * 30
+      : 0;
+    const loser = !b ? a : aScore >= bScore ? b : a;
+    const winner = loser === a ? b : a;
+
+    loser.state = "DEAD";
+    loser.path = [];
+    loser.pathIndex = 0;
+    loser.progress = 0;
+    loser.targetTile = undefined;
+    loser.targetBuildingId = undefined;
+    loser.combatTimer = undefined;
+    loser.combatOpponentId = undefined;
+    addChronicle(
+      this.state,
+      `${loser.name} falls in the streets${winner ? `, slain by ${winner.name}` : ""}.`
+    );
+    notifyDeath(this.state, loser);
+
+    if (winner) {
+      winner.state = "IDLE";
+      winner.combatTimer = undefined;
+      winner.combatOpponentId = undefined;
+    }
+  }
+
+  private tickSparks(dtMs: number) {
+    if (this.sparks.length === 0) return;
+    const speed = this.state.time.timeScale === 0 ? 0.2 : this.state.time.timeScale;
+    for (let i = this.sparks.length - 1; i >= 0; i--) {
+      const s = this.sparks[i];
+      s.life -= dtMs;
+      if (s.life <= 0) {
+        this.sparks.splice(i, 1);
+        continue;
+      }
+      s.x += s.vx * dtMs * speed;
+      s.y += s.vy * dtMs * speed;
+      s.vy += 0.0001 * dtMs * speed; // tiny gravity
+    }
+  }
+
+  private renderSparks() {
+    if (this.sparks.length === 0) return;
+    const ctx = this.ctx;
+    const ts = this.state.grid.tileSize;
+    for (const s of this.sparks) {
+      const a = Math.max(0, s.life / s.maxLife);
+      const r = ts * 0.05 * a + 0.5;
+      ctx.fillStyle = `rgba(255, ${180 + Math.floor(60 * a)}, 80, ${a})`;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   public setTimeScale(scale: 0 | 1 | 2) {
     this.state.time.timeScale = scale;
+  }
+
+  public getTimeScale(): 0 | 1 | 2 {
+    return this.state.time.timeScale;
   }
 
   /**

@@ -1,7 +1,33 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { GameEngine } from "./game/GameEngine";
-import type { CivilizationState, GameState } from "./game/types";
+import type { CitizenTapInfo } from "./game/GameEngine";
+import type { Citizen, CivilizationState, GameState } from "./game/types";
 import { ALL_NEEDS, NEED_COLORS, NEED_LABELS } from "./game/types";
+
+/**
+ * Phase 4: Generate the inner monologue line for a tapped NPC. The choice is
+ * driven by their highest-priority dramatic stat — royalty/faction first,
+ * then the survival drives, then profession flavor, with a quiet default.
+ */
+function buildMonologue(c: Citizen): string {
+  if (c.isKing) return "The crown weighs heavy. My subjects must remember their place.";
+  if (c.isDowagerQueen) return "I rule until my son is grown. Let no one forget it.";
+  if (c.isQueen) return "A queen's smile must never falter, no matter the winter.";
+  if (c.isPrince) return "Father trains me for the throne. The day will come.";
+  if (c.state === "COMBAT") return "For the realm! Steel meets steel!";
+  if (c.faction === "rebel" || c.isRebel)
+    return "The true bloodline is broken. We march at dawn.";
+  if (c.state === "PRAYING") return "Heavens, deliver us. The bread is gone.";
+  if (c.hunger > 80) return "The granaries are empty. We will not survive the winter.";
+  if (c.vanity > 80) return "My estates grow larger by the day.";
+  if ((c.safety ?? 100) < 30)
+    return "I have not slept beneath a roof in weeks.";
+  if (c.state === "ROGUE") return "If they will not feed us, we will take what we are owed.";
+  if (c.profession === "Guard") return "My watch never ends.";
+  if (c.profession === "Farmer") return "The wheat grows tall this year — praise the King.";
+  if (c.profession === "Miner") return "Stone for the King's walls — every day, every hour.";
+  return "The seasons turn. The work continues.";
+}
 
 const MONTH_NAMES = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -23,6 +49,32 @@ export default function App() {
   const [buildingCount, setBuildingCount] = useState(0);
   const [citizenCount, setCitizenCount] = useState(0);
   const [hungryCount, setHungryCount] = useState(0);
+  // Phase 4: Inner Monologue overlay state.
+  const [monologue, setMonologue] = useState<{
+    citizen: Citizen;
+    x: number;
+    y: number;
+  } | null>(null);
+  // Remembered timeScale at the moment the monologue paused the game.
+  const prevScaleRef = useRef<0 | 1 | 2>(1);
+
+  const onCitizenTap = useCallback((info: CitizenTapInfo) => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    prevScaleRef.current = eng.getTimeScale();
+    eng.setTimeScale(0);
+    setTimeScaleState(0);
+    setMonologue({ citizen: info.citizen, x: info.screenX, y: info.screenY });
+  }, []);
+
+  const closeMonologue = useCallback(() => {
+    setMonologue(null);
+    const eng = engineRef.current;
+    if (!eng) return;
+    const restore = prevScaleRef.current === 0 ? 1 : prevScaleRef.current;
+    eng.setTimeScale(restore);
+    setTimeScaleState(restore);
+  }, []);
 
   const onTimeUpdate = useCallback((state: GameState) => {
     setGameMonth(state.time.gameMonth);
@@ -52,7 +104,7 @@ export default function App() {
 
   useEffect(() => {
     if (!canvasRef.current) return;
-    const engine = new GameEngine(canvasRef.current, { onTimeUpdate });
+    const engine = new GameEngine(canvasRef.current, { onTimeUpdate, onCitizenTap });
     engineRef.current = engine;
     const s = engine.getState();
     setGameMonth(s.time.gameMonth);
@@ -66,7 +118,7 @@ export default function App() {
       engine.destroy();
       engineRef.current = null;
     };
-  }, [onTimeUpdate]);
+  }, [onTimeUpdate, onCitizenTap]);
 
   const handleTimeScale = (scale: 0 | 1 | 2) => {
     engineRef.current?.setTimeScale(scale);
@@ -161,6 +213,37 @@ export default function App() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Phase 4: Inner Monologue tooltip + click-anywhere-to-close scrim */}
+      {monologue && (
+        <div className="monologue-scrim" onClick={closeMonologue} onTouchStart={closeMonologue}>
+          <div
+            className="monologue"
+            style={{
+              left: Math.max(12, Math.min(window.innerWidth - 260, monologue.x - 130)),
+              top: Math.max(12, monologue.y - 96),
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="monologue-name">
+              {monologue.citizen.name}
+              <span className="monologue-role">
+                {monologue.citizen.isKing ? "the King"
+                  : monologue.citizen.isDowagerQueen ? "Dowager Queen"
+                  : monologue.citizen.isQueen ? "the Queen"
+                  : monologue.citizen.isPrince ? "Heir"
+                  : monologue.citizen.faction === "rebel" ? "Rebel"
+                  : monologue.citizen.faction === "royalist" ? "Royalist"
+                  : monologue.citizen.profession && monologue.citizen.profession !== "None"
+                    ? monologue.citizen.profession
+                    : "Citizen"}
+              </span>
+            </div>
+            <div className="monologue-text">"{buildMonologue(monologue.citizen)}"</div>
+            <div className="monologue-hint">tap anywhere to dismiss</div>
+          </div>
         </div>
       )}
 

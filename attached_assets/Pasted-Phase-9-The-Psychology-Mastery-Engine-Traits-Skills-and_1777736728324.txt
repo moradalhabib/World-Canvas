@@ -1,0 +1,38 @@
+Phase 9: The Psychology & Mastery Engine (Traits, Skills, and Memory)
+Acknowledge this prompt. We are finalizing the NPC internal depth by integrating persistent traits, RPG-style skill progression, and an episodic memory graph. Append this logic strictly to the existing Utility Brain, Economy, and Combat systems without breaking them.
+
+1. Unique IDs & Memory Graph (Relationships):
+
+Assign a unique id string/integer to every Citizen at spawn.
+
+Add a memory object map to the Citizen class (e.g., { targetID: opinionScore }).
+
+Interaction Logic: If an NPC witnesses or is the target of an attack (Combat state), they log the attacker's id in their memory with a score of -100. An NPC will refuse to heal, assist, or pathfind near any ID with a negative score, regardless of faction alignment.
+
+2. Permanent Behavioral Traits:
+
+At spawn, assign one random string tag to the NPC's trait property from this pool: ['Zealot', 'Greedy', 'Coward', 'Diligent'].
+
+Utility Multipliers:
+
+Zealot: Base Faith decay rate is reduced by 50%.
+
+Greedy: The gold required to trigger a Vanity class upgrade is doubled.
+
+Coward: If assigned as a Guard and entering COMBAT, calculate a 30% probability every tick to break combat, change state to FLEEING, and pathfind away from the target.
+
+Diligent: Hunger increases 20% faster, but resource generation speed is increased by 15%.
+
+3. The Mastery Curve (RPG Skills):
+
+Add a skills object to the Citizen class tracking level (default 1) and xp (default 0) for their assigned profession.
+
+Progression Loop: Every time an NPC successfully converts raw goods to Gold at the Treasury/Home, add 10 XP. At 100 XP, increment level by 1 and reset xp.
+
+Output Scaling: A Farmer or Miner's resource yield per trip is multiplied by (1 + (level * 0.1)).
+
+4. UI Integration:
+
+Update the Phase 4 "Inner Monologue / Tap UI". When an NPC is tapped, the minimalist HTML tooltip must now also display their Trait, their current Skill Level, and a brief string if they hold a grudge (e.g., "Despises: NPC_42").
+
+Instruction: Confirm understanding. Provide the updated JavaScript logic, specifically optimizing the relationship memory array so that looking up IDs during pathfinding does not drop the frame rate.

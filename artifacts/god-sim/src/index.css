@@ -260,3 +260,71 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.35),
     0 2px 8px rgba(0, 0, 0, 0.3);
 }
+
+/* Phase 4: Inner Monologue overlay */
+.monologue-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+}
+.monologue {
+  position: absolute;
+  width: 260px;
+  padding: 14px 16px 12px;
+  background: linear-gradient(180deg, #1a1d24 0%, #0f1218 100%);
+  border: 1px solid #f4cf5b;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(244, 207, 91, 0.15) inset;
+  color: #eaeaf2;
+  font-family: Georgia, "Times New Roman", serif;
+  cursor: default;
+  animation: monologue-in 140ms ease-out;
+}
+@keyframes monologue-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+.monologue::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -8px;
+  transform: translateX(-50%) rotate(45deg);
+  width: 14px;
+  height: 14px;
+  background: #0f1218;
+  border-right: 1px solid #f4cf5b;
+  border-bottom: 1px solid #f4cf5b;
+}
+.monologue-name {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-weight: 700;
+  font-size: 15px;
+  color: #f4cf5b;
+  letter-spacing: 0.3px;
+}
+.monologue-role {
+  font-size: 11px;
+  font-weight: 400;
+  color: #a8b3c4;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.monologue-text {
+  margin: 8px 0 6px;
+  font-size: 14px;
+  line-height: 1.4;
+  font-style: italic;
+  color: #eaeaf2;
+}
+.monologue-hint {
+  font-size: 10px;
+  text-align: right;
+  color: #6b7388;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
