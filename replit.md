@@ -1,111 +1,67 @@
 # Overview
 
-This project is a pnpm workspace monorepo for a God Simulator web game using TypeScript. The game features a canvas-rendered medieval setting where players manage a civilization on a tiled biome map. The primary goal is to deliver a complex simulation game with detailed civic management, dynamic environmental elements, and intricate NPC behaviors, combining strategic oversight with emergent gameplay. The long-term vision includes expanding simulation depth with features like crime, medicine, and leisure, continuously refining visual and systemic fidelity.
+God Simulator — a vanilla-JS isometric "watch-over-them" sim where the player is a divine observer who blesses, punishes, and intervenes in the lives of an autonomous medieval village. Citizens have hunger, health, happiness, mood, gold, ages, lifespans, and roles; they work, eat, rest, drink, pray, steal, get jailed, fall sick, get healed, marry, give birth, age, and die — all without the player having to direct them. The player's job is purely to nudge through 6 god powers fueled by a Faith resource the priests generate.
+
+The codebase was fully rewritten from a 6,000-line TypeScript / React stack to a single `index.html` + `game.js` per the user's master prompt. The previous TS systems (mood, crime, medicine, leisure, dollhouse render, fauna AI) were carried forward and re-implemented cleanly in the new vanilla engine.
 
 # User Preferences
 
-I prefer iterative development and want to be asked before making major changes.
+- I prefer iterative development and want to be asked before making major changes.
+- The "MASTER PROMPT — GOD MODE" is the visual and architectural bible. Carry-forward systems (mood, crime, medicine, leisure, dollhouse, fauna) sit on top of it.
+- Use existing PNGs when loaded — no placeholder shapes if the asset is available.
+- Wait for asset preload to complete before starting the game loop.
+- Zero TODOs in shipped code.
 
 # System Architecture
 
-## Core Technologies
-- **Monorepo**: pnpm workspaces
-- **Node.js**: 24
-- **Package Manager**: pnpm
-- **TypeScript**: 5.9
-- **API Framework**: Express 5
-- **Database ORM**: Drizzle ORM
-- **Validation**: Zod
-- **API Codegen**: Orval (from OpenAPI spec)
-- **Build Tool**: esbuild
+## Stack
+- **Monorepo**: pnpm workspaces (god-sim is one of three artifacts; api-server and mockup-sandbox are siblings and untouched by this rewrite).
+- **god-sim runtime**: Vanilla JavaScript ES module (`game.js`) loaded from a single `index.html`. No React, no TypeScript, no Tailwind, no Radix, no build-time framework. Vite is kept purely as the dev/static server because the workspace already provisions it.
+- **`package.json`**: trimmed to `vite` + `@types/node` only.
+- **`vite.config.ts`**: stripped of React/Tailwind/error-modal plugins; just port + base-path wiring.
 
-## Game Engine & Rendering
-The game utilizes a TRUE 2:1 dimetric isometric projection for rendering, inspired by Age of Empires. It features diamond-shaped tiles with precise pick math, per-frame depth-sorting based on `row + col`, and accurate sprite anchoring for buildings and citizens. Terrain is rebuilt on an offscreen canvas upon changes. The rendering system includes:
-- **Dollhouse Render**: Buildings are composed of three depth-sorted layers (floor, back-structure, front+roof) to interleave with citizens. Roofs become transparent (`roofAlpha = 0.25`) when an NPC is on the tile.
-- **Visual Overhaul**: Incorporates premium hand-illustrated isometric aesthetics with procedural terrain clutter, interior furniture stamps for buildings, and a unique royal cape for the King.
-- **VFX Overhaul**: Implements seasonal terrain palettes, animated water surfaces with foam, divine impact VFX (screen flash, shake), blessing light shafts, and speed vignettes.
-- **Hi-Fi Sprite Drop (Phase 7)**: User-supplied PNGs replace procedural art for ground (`grass_1.png`, `sand_1.png` — 256×256 native iso 2:1 diamonds), trees (`tree_3.png`, anchored bottom-center), and free houses (`house_4.png`). Biome-aware ground dispatch in `rebuildTerrainLayer`: grass+forest → grass sprite, desert → sand sprite, all other biomes (water/snow/mountain/crater) fall back to a desaturated procedural color. Asset-ready watcher rebakes the terrain layer once both ground PNGs decode.
-- **Premium Pass**: Borderless terrain (no grid stroke), desaturated low-contrast fallback palette tuned for the dark-mode UI, deeper cinematic vignette (alpha 0.70 at the rim), warm overlay-blend tint (alpha 0.08) to unify disparate sprite palettes, and continuous sine-wave breathing animations on trees (±1.5%) and citizens (±1%) with per-entity phase offsets so the world feels alive without lockstep pulsing.
-- **3D Extruded Cliffs**: Mountain tiles feature vertically extruded cliff faces baked into the terrain layer.
-- **Fauna**: Includes animated sheep and wolves with wandering logic and grazing animations.
-- **UI/UX**: Features an inspect modal for citizen details, HUD elements for season/weather, and state-specific overlays (chatting bubbles, mental break glyphs, sick aura). The UI adopts a "Dark Royal" CSS theme with elegant serifs and gold accents, including a Royal Chronicle parchment scroll. UI panels like the Chronicle and Civic Needs are designed for minimal screen real estate usage, with collapse/expand functionality and backdrop filters for transparency. The canvas uses a saturation filter and tilt-shift effect for a "miniature" feel. Custom power-specific cursors are implemented.
+## Runtime Layout
+```
+artifacts/god-sim/
+├── index.html         premium dark-royal HUD chrome (loading, resource bar,
+│                      world clock, time controls, god-power tray,
+│                      notifications, inspect card, extinction overlay)
+├── game.js            ~1100-line vanilla engine (everything below)
+├── public/assets/     grass_1.png, sand_1.png, tree_3.png, house_4.png
+├── vite.config.ts     port + BASE_PATH only
+└── package.json       vite + @types/node
+```
 
-## Game Logic & NPC AI
-The game simulates civic needs, hunger, and complex NPC state machines. Key logic features include:
-- **Genetics**: Citizens inherit surnames and traits.
-- **Psychology**: Dynamic `Citizen.mood` system with mental break states (DOOMSAYER, RECLUSE, THIEF) triggered by low mood.
-- **Rumor Mill**: A throttled system for spreading rumors and contagion among chatting NPCs.
-- **State Machines**: Critical invariants ensure correct handling of NPC states, particularly for CHATTING and MENTAL_BREAK.
-- **Climate & Ecosystem Engine**: Dynamic seasons and weather influencing gameplay and NPC mood. Includes a particle engine for weather VFX.
-- **Living City Expansion**: Adds `morality`, `health`, and `leisure` mechanics, new NPC states (STEALING, ARRESTING, IMPRISONED, HEALING, DRINKING), and associated buildings (dungeon, apothecary, tavern). This includes crime, law enforcement, a medical engine with contagion, and a leisure system.
-- **Cognitive Engine**: Implements state+trait-driven thought libraries for NPCs (`buildThought`, `actionLabel`) and reactive AI responses (PANIC from divine smite, ADMIRE from divine bless) which reuse existing FLEEING states or modify `admireUntilMs` timers.
-- **Balance Changes**: Adjusted hunger drain to be more forgiving.
+## Engine (`game.js`)
+Single IIFE, no globals leaked. Sections in order:
 
-## Character Animation & Visual Progression
-Citizen rendering includes:
-- **Limb Animation**: Beefier, higher-contrast limbs with distinct foot rects and increased swing amplitude for walking.
-- **Gestures**: CHATTING NPCs perform a talking gesture (arm bob), and WORKING specialists exhibit a focus pulse (arm dip).
-- **Accessories**: The King has a unique gold drop-shadow. Builder-type specialists (without other professions) are shown with a hammer accessory. Mastery skill ≥ 5 (but < 10) gets a subtle gold halo on the profession tool — telegraphing rising mastery before they reach the gold/diamond tool tier at L10.
-- **Badge System**: Replaced all text-based overhead indicators on NPCs with pure shape badges for states like alert, recluse, thief, imprisoned, healing, and drinking.
+1. **Constants** — `TILE_W=128`, `TILE_H=64` (strict 2:1), `GRID=24×24`, `TICK_MS=600`, `SEASON_DAYS=30`, role colors, palette, power costs.
+2. **State** — tiles[r][c], citizens, buildings, graves, animals, particles, resources (food/wood/stone/gold/faith), time (day/season/year/scale/paused/accum), weather, notifications, selected, activePower, camera, shake, extinct.
+3. **Asset loader** — `Promise.all` over the 4 PNGs with error fallbacks, gates the game loop. Loading-screen progress bar fills as assets resolve.
+4. **World gen** — diamond lake + sand shoreline in NE, forest seed-clusters, stone quarry patches, farmland near a center-ish village seed; spawns 4 houses, 1 farm, 1 church, 1 tavern, 1 apothecary, 1 dungeon, 1 market, 7 starting citizens (1 each of every role + 1 spare farmer), 8 sheep on grass.
+5. **Iso math** — `isoToScreen(c,r)` and `screenToIso(sx,sy)` are mutual inverses.
+6. **Pathfinding** — BFS on walkable tiles, capped at 800 nodes for safety, with nearest-walkable fallback for water-adjacent targets.
+7. **Citizen tick** (per in-game day): aging, hunger drain (Builders/Woodcutters drain faster), sickness progression/recovery, starvation/plague death, mood derivation from happiness, crime-streak from low faith + low happiness, behavior cascade (`JAIL > THIEF > EAT > SICK > REST > DRINK > PRAY > WORK`), then visual lerp toward target tile (0.18 walk / 0.35 snap).
+8. **Carry-forward systems**:
+   - **Mood**: `c.mood ∈ {Despondent, Restless, Content, Joyful}` derived from happiness; bless adds +30 + 10-day buff.
+   - **Crime**: `c.crimeStreak` rises when `faith < 10 && happiness < 30`; >12 → THIEF state, steals 1 gold from adjacent citizen, 50% Guard arrest chance → 5-day jail.
+   - **Medicine**: `c.sickness` 0–100; >40 triggers visible green sickness aura; SICK intent walks to apothecary (or home fallback) and recovers there.
+   - **Leisure**: tavern bumps happiness +18 with a 6-day cooldown.
+   - **Dollhouse render**: when any citizen stands on a house tile, that house's `globalAlpha` drops to 0.55 so the doll inside is visible.
+   - **Fauna AI**: sheep wander every 3–8 days to a random walkable adjacent grass tile, lerp smoothly with idle bob.
+9. **God powers** — Bless (50✨, +30 happiness all + 10-day buff + ripple), Strike (15✨, lightning + screen shake + kills citizen/destroys building on tile), Rain (20✨, +5 days farmer yield boost & rain weather), Grow (10✨, target tile → forest), Birth (80✨, spawns infant in random house), Plague (free, infects 3 + 30s contagion).
+10. **Particles** — chimney smoke (auto-emit per house), seasonal autumn leaves & winter snow, weather rain, lightning bolts + flash overlay + screen shake, sparkle (birth/grow), ripple (bless), dissolve (death).
+11. **Render** in 8 passes: backdrop → camera+shake → ground (palette diamond → PNG stamp → biome tint → water shimmer & foam) → y-sorted entity queue (trees, buildings, citizens, sheep, graves) → in-world particles → screen-space weather → warm-tint multiply → vignette → lightning flash → speed vignette at x20.
+12. **HUD updates** — DOM-based, refreshed each frame: live clock, resource counters with gold-flash on gain, power-button enable/disable from current Faith, time-control active state.
+13. **Input** — click-drag camera, click-to-inspect (citizen first, tile fallback), targeted-power crosshair cursor, keyboard shortcuts (Space pause, 1/2/3 speeds, Esc cancel).
+14. **Main loop** — accumulator-based fixed sim ticks scaled by `time.scale`, render every rAF.
 
-## Phase 23 — Evolutionary Engine: EraController & AssetSkinMap
-- **Era enum** (`types.ts`): new `Era = "STONE_AGE" | "MEDIEVAL" | "INDUSTRIAL"` and a `currentEra: Era` field on `GameState`. Defaults to `MEDIEVAL` on fresh state. Storage v15 backfills legacy saves to MEDIEVAL (the only era ever shipped) and persists explicit era values from v15 onward.
-- **AssetSkinMap** (`AssetManager.ts`): the flat Phase 22 manifest is replaced by `ASSET_SKIN_MAP: Record<Era, SpriteSkin>`. The MEDIEVAL skin is fully populated (paths under `public/assets/medieval/{buildings,characters,environment}/`); STONE_AGE and INDUSTRIAL ship as empty objects, reserved for future asset packs that slot in with zero engine changes.
-- **Era-aware AssetManager API**: `has(era, key)`, `get(era, key)`, and `tryDraw(ctx, era, key, x, y, ts)` all take era as a first-class parameter. Internal cache key is namespaced as `<era>::<key>` so the same logical entity (e.g. `building.house_free`) holds three independent PNGs across eras. `preload()` schedules every entry across every era at startup.
-- **Renderer wiring**: every building draw site (`drawBuilding`, `drawBuildingFloor`, `drawBuildingBackStructure`, `drawBuildingFrontAndRoof`) now passes `this.state.currentEra` to the asset lookup. Citizen sprite resolution does the same. The moment `setEra()` flips the era, every subsequent frame asks for the new era's skin without any other bookkeeping.
-- **`engine.setEra(newEra)`** (public API): flips `state.currentEra` AND triggers a Transition Scaffolding pass — every standing (non-rubble) building is reset to `complete=false, constructionWorkMs=0` so it visually reverts to the Phase-21 scaffold/foundation and must be re-completed by working citizens, revealing the new era's architectural style on completion. A chronicle entry marks the transition. No automatic trigger fires yet — era progression is gated behind explicit calls (future phases will wire a research/population threshold).
-- **Era-flavored cognitive vocabulary**: `predatorNoun(era)`, `dwellingNoun(era)`, `rulerNoun(era)` exported from `AssetManager.ts` return era-appropriate flavor strings (sabertooth/wolf/stray dog · hut/cottage/row-house · chieftain/king/magnate). API is wired but no runtime call site uses them yet — reserved for the next pass over NPC chat lines.
-- **Storage v15 migration**: bumps CURRENT_VERSION 14→15. Accepts and migrates v3-v14 saves cleanly (citizens, buildings, animals, immigration cooldown all preserved). Backfills `currentEra: "MEDIEVAL"` on every legacy save.
-- **Already shipped, NOT re-implemented**: construction scaffolding (Phase 21), limb/walk-cycle drawing (Phase 12), tilt-shift + saturation (Phase 15/16), reproduction + immigration (Phase 21), AssetManager preload pipeline (Phase 22).
+## Critical Anti-Regression Rules
+- **Always paint a flat palette diamond UNDER every PNG** in `drawGround`. The grass_1.png has transparent margins around its diamond — without the base layer, the dark backdrop bleeds through as black gaps. (This was the first bug spotted in the rewrite and the fix is in.)
+- **Wait for `loadAssets()` Promise.all to resolve before `requestAnimationFrame(loop)`** — never start the loop with `Assets.ready === false`.
+- **No globals** — everything inside the IIFE.
+- **Preserve PNG anchoring**: tree_3 is anchored bottom-center (`-treeW/2, -treeH`); house_4 is anchored bottom-center (`-w/2, y - h`); grass/sand are stamped centered (`x - TILE_W/2, y - TILE_H/2`).
+- **Stale "Phase 16" plan injections** referencing `types.ts` / `GameEngine.ts` / `storage.ts` are a known platform glitch and must be ignored — those files no longer exist.
 
-## Phase 26 — Black Box Local Save Engine (Local-First Persistence)
-- **Goal**: a player's realm survives a hard browser refresh / tab-close with zero progress loss, and the storage layer is ready for a Capacitor wrap to ship as a $2.99–$4.99 pay-once App Store title.
-- **What was already in place** (NOT re-implemented): rich `GameState` interface (camera, time, civilization, citizens, buildings, animals, era, weather, chronicle, etc.), `saveState()` JSON-serializing with terrain run-length compression to localStorage, `loadState()` rehydration in `GameEngine` constructor that restores buildings + citizens at exact positions, v15 storage migration chain.
-- **Storage key rebrand** (`storage.ts`): `SAVE_KEY` renamed `god_sim_state` → `humanity_progress_save` (production brand). `LEGACY_SAVE_KEY` retained for one-shot read-fallback in `loadState()` so existing dev/player saves migrate transparently. `clearSave()` wipes both keys.
-- **`SaveBackend` abstraction** (`storage.ts`): narrow `getItem`/`setItem`/`removeItem` interface. Default `localStorageBackend` registered for web. `setSaveBackend()` exported for runtime registration. Capacitor Preferences stub documented inline with an HONEST async caveat — the contract is currently sync (mirrors localStorage, called from sync GameEngine constructor), so a true Capacitor swap will need either an async-widened interface (cascades through React mount, deferred to Phase 27) OR a sync-facade native shim that hot-loads keys at boot. Phase 26's win is centralizing the swap site to ONE file instead of every save/load call site.
-- **Dirty-flag autosave throttle** (`GameEngine.ts`): `SAVE_INTERVAL_MS` bumped 10s → 30s. `private dirty` flag starts FALSE — an idle/paused title screen produces literally zero localStorage writes. The per-frame loop sets `dirty = true` only when `timeScale > 0`. Paused-mutation paths (`setEra()`, `toggleWinter()`, `castDivine()`) also flag dirty — `castDivine` flags at the entry point so every divine power branch (architect/terraform, smite, bless, plague, meteor) is covered without sprinkling markers across each case. `save()` resets the flag after a successful write. Legacy-key migration is handled write-through inside `loadState()` itself, so the boot path doesn't need to set dirty.
-- **Hard-refresh safety net** (`GameEngine.ts`): `window.addEventListener("beforeunload", onBeforeUnload)` flushes an unconditional final snapshot — React's useEffect cleanup doesn't fire on Cmd-R, so this is the only hook that catches a real browser refresh in time. Listener is removed in `destroy()` to avoid StrictMode double-mount leaks.
-- **Era default**: Phase-23 `MEDIEVAL` default is preserved (the spec's "Stone Age init" copy is thematic — Phase 23 was explicit about MEDIEVAL for current builds).
-
-## Phase 23 — EraController & AssetSkinMap
-- Added `Era = "STONE_AGE" | "MEDIEVAL" | "INDUSTRIAL"` to `GameState` (default `MEDIEVAL`); storage v15 migration adds `currentEra` to legacy saves.
-- AssetManager cache is now era-keyed (`<era>::<key>`) so eras can ship distinct sprite skins without collision.
-- `engine.setEra(newEra)` advances the era and pushes every standing building back into the construction-scaffold pipeline so the renderer transitions smoothly.
-- Era-flavor noun helpers exported for chronicle copy.
-- Bonus fix: `lastImmigrationYear` now actually persists in `saveState`.
-
-## Phase 22 — Sprite Asset Pre-Loader & Engine Conversion
-- **AssetManager** (`src/game/AssetManager.ts`): new utility that preloads a manifest of PNG paths into HTMLImageElement instances at engine startup. Fire-and-forget — never blocks a frame. Keys: stable strings (e.g. `building.house_free`, `character.peasant`). Paths resolved against `import.meta.env.BASE_URL` so the same manifest works regardless of where the artifact is mounted. Failed loads silently flip to "failed" state and never retry.
-- **Sprite Manifest** (`SPRITE_MANIFEST` in `AssetManager.ts`): exhaustive list of expected PNG paths under `artifacts/god-sim/public/assets/{buildings,characters,environment}/`. Ships empty (no PNGs on disk yet) — the user can drop files into those directories and the matching entity will swap to the sprite on the next page load with zero code changes.
-- **Anchor system**: `tryDraw(ctx, key, x, y, ts)` blits the sprite at iso bottom-center anchor (foot of sprite sits on the iso diamond's ground line), preserving aspect ratio. Per-key `ANCHOR_OVERRIDES` table allows future entities to opt into `center` or `top-left` anchoring.
-- **Building sprite hook**: `drawBuilding`, `drawBuildingFloor`, `drawBuildingBackStructure`, and `drawBuildingFrontAndRoof` all check `assets.has("building.<typeId>")` first. If loaded, the FRONT-AND-ROOF slot blits the PNG (with roofAlpha mixed into globalAlpha for the dollhouse cutaway) and all other layers early-return so we don't double-render planks behind the sprite. Otherwise the existing procedural half-timber pipeline runs unchanged.
-- **Citizen sprite hook**: `drawSingleCitizen` calls `resolveCitizenSpriteKey(c)` which walks a priority list (King → Queen → infant → child → noble → peasant) and returns the most-specific key the manager actually has loaded. This means dropping in just `peasant.png` works without nobles disappearing — they fall through to procedural until `noble.png` ships. When a sprite is found, the entire procedural body/limbs/accessories pipeline is skipped.
-- **Fallback guarantee**: Phase 22 ships with ZERO PNGs on disk. Every `Image.onerror` fires, every `assets.has(key)` returns false, and every draw call falls through to the existing procedural path. Visual state is preserved 1:1 from Phase 21.
-
-## Phase 21 — Masterpiece Integration: Life, Growth & Construction
-- **Faster Generational Pace**: `ADULT_AGE` lowered 18 → 5. Lifecycle is now infant 0-2, child 2-5, adult 5-60, elder 60+. Dynasties now turn over on a Townsmen-style timescale instead of real-decades.
-- **Immigration**: New `tryImmigration()` in `royalty.ts` runs once per game-year. When the realm's average citizen mood ≥ 80 AND ≥ 3-5 game-years (deterministic per-window jitter) have elapsed since the last wave, 1-3 already-adult Grade-1 peasants spawn at a random grass tile on the map edge with a Chronicle entry: "Travelers drawn by our prosperity have arrived." `GameState.lastImmigrationYear` tracks the cooldown (storage v14 backfill anchors it to the current game-year so older saves don't get a free wave on load).
-- **Construction Scaffolding**: New `Building.complete` and `Building.constructionWorkMs` fields. Newly placed buildings start as scaffolded foundations — they produce nothing, house nobody, and contribute zero need-satisfaction until a per-frame accumulator (`tickConstruction`) credits 30,000 ms of cumulative living-citizen presence on the tile. Completion logs a Chronicle entry. Production/housing iteration in `civilization.ts` skips incomplete buildings entirely. Storage v14 migration backfills `complete:true` on every legacy building so existing realms don't freeze.
-- **Scaffolding Visual**: Incomplete buildings render as a dark-dirt foundation diamond + four wooden corner posts + crossing horizontal scaffold beams + a gold construction progress bar at the foundation's leading edge. Wall + roof rendering is fully suppressed for incomplete builds.
-- **Half-Timbered Buildings**: Residential and service building front walls now feature dark-wood Tudor-style beams — two vertical edge beams, a horizontal mid-girt, and a diagonal cross brace on the left half. Production buildings keep the plain plank look so the silhouettes still differentiate.
-- **Tilt-Shift + Saturation**: Already shipped in Phase 19 (`index.css` lines 53-85): two soft `backdrop-filter: blur(2.5px)` bands on the top + bottom 15% of the canvas, plus `filter: saturate(1.25)` on the canvas. Spec confirmed match.
-
-## Phase 20.6 — Dynasty & Biology
-- **Infant LifeStage**: New "infant" tier (ages 0..2) added to `LifeStage` union. `getLifeStage` is now a 4-way classifier (infant / child / adult / elder). Constants live in `royalty.ts` (`INFANT_AGE = 2`, `ADULT_AGE = 18`, `ELDER_AGE = 60`).
-- **Infant Render**: Drawn as a swaddled bundle (cream ellipse + pink head, no limbs, no overlays). Bypasses the composite sprite + limb pipeline via an early-out branch in `drawSingleCitizen`. Wrapped in its own `ctx.save()/restore()` so the fillStyle/strokeStyle changes don't leak into the next NPC.
-- **Infant Behavior**: Skipped by `tickEconomyAndFaction` and `tickCitizenMonth`. Path/pathIndex/progress are zeroed on every brain tick so the baby stays at the spawn tile (their parent's location). Hunger never rises for infants — per spec they "drain parent energy" rather than eating their own ration.
-- **Reproduction Gating**: `tryCivilianReproduction` (in `royalty.ts`) now requires both parents to have mood ≥ 40 AND be within 3 tiles of a house (the relaxed "in-the-same-House-at-NIGHT" check). Breed chance bumped 0.4 → 0.85, per-year cap 2 → 3 so the population actually grows.
-- **Birth Chronicle**: Reworded to user spec — `A new soul, [Name] [LastName], has joined the realm of King [KingName].` Pulls the king name via `findKing()`.
-- **Hunger Pacing**: `HUNGER_RISE_PER_MONTH` 6 → 2, `HUNGER_RISE_JITTER` 4 → 2. Net reduction vs Phase 1 baseline ≈ 73%. Reproduction can outpace starvation under typical food + housing setups.
-- **Composite Sprite Cache**: `subtleGlowTier` (level 5..9 band) is now part of the cache signature at bit 13, so a 4→5 levelup correctly invalidates and rebuilds the cached sprite with the new gold halo. Prior versions only tracked the master tier (≥10) and would silently miss the L5 transition until an unrelated change forced eviction.
-
-## Data Persistence
-Game state is stored and versioned, with backward compatibility migrations for older saves. New fields are backfilled during state loading. Reactive timers (`panicUntilMs`, `admireUntilMs`) are stored as wall-clock timestamps on the Citizen object, designed to be harmlessly false if stale from older saves, thus avoiding the need for version bumps for these specific features.
-
-# External Dependencies
-
--   **PostgreSQL**: Relational database.
--   **Drizzle ORM**: For database interaction.
--   **Zod**: For schema declaration and validation.
--   **Orval**: For OpenAPI spec code generation.
--   **Express**: For the API server.
+## Deployment
+Static SPA served by Vite in dev; `pnpm run build` emits to `dist/public/` for the standard Replit deployment pipeline.
