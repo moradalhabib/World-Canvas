@@ -172,9 +172,27 @@ export class AssetManager {
     if (this.status.has(ck)) return;
     this.status.set(ck, "pending");
     const img = new Image();
+    // Strip any leading slash on the relative path so concatenation with
+    // BASE_URL (which always ends in "/") produces exactly one slash.
+    const clean = relativePath.startsWith("/") ? relativePath.slice(1) : relativePath;
+    const fullUrl = this.baseUrl + clean;
+    // Phase 7 diagnostics — explicit per-asset load logging so the
+    // browser console proves whether each PNG resolved (200 + decode)
+    // or failed (404 / decode error). Only the three hi-fi assets we
+    // actually shipped are logged loudly; the era-namespaced
+    // placeholders that 404 by design stay quiet.
+    const isHiFi =
+      key === "environment.ground" ||
+      key === "environment.tree" ||
+      key === "building.house_free";
     img.onload = () => {
       this.status.set(ck, "ready");
       this.images.set(ck, img);
+      if (isHiFi) {
+        console.log(
+          `[AssetManager] LOADED  ${era}/${key}  src=${fullUrl}  ${img.naturalWidth}x${img.naturalHeight}`,
+        );
+      }
     };
     img.onerror = () => {
       // Phase 22/23 ships with NO PNGs on disk, so every initial load
@@ -182,11 +200,14 @@ export class AssetManager {
       // pre-asset-drop. Status flips to "failed" so `has()` short-circuits
       // to the procedural fallback forever (no retries).
       this.status.set(ck, "failed");
+      if (isHiFi) {
+        console.error(`[AssetManager] FAILED  ${era}/${key}  src=${fullUrl}`);
+      }
     };
-    // Strip any leading slash on the relative path so concatenation with
-    // BASE_URL (which always ends in "/") produces exactly one slash.
-    const clean = relativePath.startsWith("/") ? relativePath.slice(1) : relativePath;
-    img.src = this.baseUrl + clean;
+    if (isHiFi) {
+      console.log(`[AssetManager] FETCH   ${era}/${key}  src=${fullUrl}`);
+    }
+    img.src = fullUrl;
   }
 
   /** True only when the era-specific image is fully decoded and ready to blit. */
