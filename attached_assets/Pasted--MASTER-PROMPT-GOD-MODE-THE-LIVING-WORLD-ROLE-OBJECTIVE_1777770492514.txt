@@ -1,0 +1,151 @@
+🎮 MASTER PROMPT — GOD MODE: THE LIVING WORLD
+
+ROLE & OBJECTIVE
+You are an expert Game Architect, Simulation Engineer, and high-end UI/UX Designer. You are building a web-based, isometric God-Mode civilisation simulator — a living, breathing digital world driven entirely by autonomous NPCs. Citizens do everything: they live, eat, build, earn, farm, reproduce, age, and die. The player is God. They observe, intervene, bless, punish, and shape the world — but never do the work themselves.
+The non-negotiable standard: visually premium, bug-free, and fully autonomous from first load. No messy prototypes. No placeholder boxes. No broken loops.
+
+STACK & FILE STRUCTURE
+
+Vanilla JavaScript + HTML5 Canvas only. No frameworks, no npm, no build tools.
+Single index.html + game.js structure.
+Runs natively in-browser. No server required.
+All game logic lives in game.js. All layout and HUD in index.html.
+
+
+PHASE 1 — WORLD ARCHITECTURE & STATE
+Grid: 24×24 isometric tile grid. Canvas fills 100% of the viewport. World is centred on load.
+Tile Types: Grass (default), Forest (harvestable), Farmland, Water (impassable), Sand (coastal border), Stone Quarry, Road.
+Time Engine:
+
+Game loop runs on requestAnimationFrame.
+Internal tick system: 1 tick = 1 in-game Day.
+Player controls: ▶ Play / ⏸ Pause / ⏩ x5 / ⏭ x20.
+A visible in-game date counter: Day / Season / Year.
+Seasons cycle: Spring → Summer → Autumn → Winter. Each affects food growth rates and NPC behaviour.
+
+Global Resources (tracked in state):
+
+🌾 Food, 🪵 Wood, 🪨 Stone, 💰 Gold, ✨ Faith
+
+
+PHASE 2 — THE NPC SIMULATION ENGINE (CORE SOUL OF THE GAME)
+This is the heart of the game. Citizens are fully autonomous agents. The player never controls them directly.
+Each Citizen has:
+
+Name, Age, Gender, Role (Farmer / Builder / Woodcutter / Merchant / Priest / Guard)
+Hunger (0–100), Health (0–100), Happiness (0–100)
+A home tile reference and a workplace tile reference
+Lifespan (randomised 40–80 in-game years)
+A personal Gold balance
+
+NPC Behaviour Loop (runs every tick):
+
+If Hunger < 30 → pathfind to nearest food source and eat. Deduct from global Food.
+If assigned role → walk to workplace and perform role action (harvest, build, pray, trade).
+If Health < 20 → rest at home. Recover slowly.
+If Happiness < 20 → NPC stops working. Happiness must be restored via God intervention or events.
+Role actions produce resources: Farmers → Food. Woodcutters → Wood. Builders → construct new buildings. Merchants → Gold. Priests → Faith.
+
+Generational Succession:
+
+When two citizens are both adults, housed, and happy → a child NPC is born after a delay.
+Children grow to adults over time. They inherit a role based on the town's needs.
+On death → a grave marker appears on their home tile. After 3 in-game years, the tile becomes available again.
+
+Population Failure States:
+
+If Food hits 0 → citizens begin dying from starvation, one per tick.
+If Faith hits 0 → citizens become unhappy. Crime events fire randomly.
+If all citizens die → EXTINCTION EVENT triggers. Cinematic overlay. God can restart with a blessing.
+
+
+PHASE 3 — ASSET PIPELINE & SAFETY
+Assets live in /assets/ and include: grass.png, water.png, sand.png, tree.png, house.png, farm.png, church.png, quarry.png, citizen_idle.png, grave.png.
+CRITICAL LOADING RULE: Do NOT start the game loop or call requestAnimationFrame until Promise.all([...imageLoads]) fully resolves. Show a loading screen during this phase.
+Fallback Rule: If any PNG fails to load, render that tile or entity as a styled canvas shape using the exact correct isometric dimensions and a muted, palette-consistent colour. Never crash. Never block. Log the failure silently to console.
+Verify natural image dimensions on load. Never hardcode assumed sizes.
+
+PHASE 4 — ISOMETRIC RENDERING ENGINE (STRICT MATH)
+Adhere strictly to 2D isometric projection. No exceptions.
+Core Constants:
+TILE_WIDTH = 128
+TILE_HEIGHT = 64   // always exactly TILE_WIDTH / 2
+Grid → Screen Conversion:
+javascriptscreenX = (col - row) * (TILE_WIDTH / 2) + offsetX;
+screenY = (col + row) * (TILE_HEIGHT / 2) + offsetY;
+Drawing Ground Tiles (Diamonds):
+javascriptctx.drawImage(img, screenX - TILE_WIDTH / 2, screenY - TILE_HEIGHT / 2, TILE_WIDTH, TILE_HEIGHT);
+Drawing Entities (Trees, Houses, Citizens — upright sprites):
+javascriptctx.drawImage(img, screenX - width / 2, screenY - height, width, height);
+The bottom-centre of every entity sprite must anchor precisely to (screenX, screenY) — the isometric cell centre.
+Depth Sorting (Y-Sort — non-negotiable):
+
+Draw all ground tiles first (full grid pass).
+Collect all entities (buildings + NPCs).
+Sort by (row + col) ascending.
+Draw entities back-to-front.
+Draw weather, particles, and HUD overlays last.
+
+
+PHASE 5 — PREMIUM VISUAL DIRECTION
+Borderless World: Zero grid lines. Zero tile outlines. Zero black strokes on terrain. Tiles must seam seamlessly.
+Colour Palette — Muted & Elegant:
+
+Grass: #8aab6e muted, slightly warm
+Water: #6a90a8 — desaturated slate-blue
+Sand: #c9b98a — warm, low contrast
+Snow (Winter): #d6dfe8 — cold pale grey-white
+All procedural colours must be desaturated by at least 30%. No garish saturation.
+
+Global Atmosphere:
+
+Apply a radial vignette to the canvas edges: dark, soft, 30% opacity. This frames the world.
+Apply a warm composite tint (globalCompositeOperation: 'multiply', very light rgba(255, 240, 210, 0.08)) over the entire canvas so all assets feel lit by the same ambient source.
+In Winter: shift the tint to cool (rgba(210, 230, 255, 0.10)).
+
+Ambient Animation ("Juice"):
+
+Trees and buildings apply a continuous subtle sine-wave vertical sway: offsetY = Math.sin(Date.now() / 1200 + uniquePhase) * 1.5px. Each entity has a randomised phase offset so they don't all move in sync.
+Citizens animate with a gentle bob while walking and a subtle idle float while stationary.
+Smoke particle emitters above chimneys on houses (tiny grey circles, rising and fading).
+Falling leaves particles during Autumn. Snow particles during Winter.
+
+Visual Events:
+
+Death → a soft dissolve animation over 0.5s before the grave appears.
+New birth → a brief golden sparkle pulse on the home tile.
+God intervention → a radiant ripple expands from the point of intervention.
+
+
+PHASE 6 — GOD MODE UI & HUD
+Layout philosophy: The UI must feel like it belongs in a premium strategy title. Dark, glassy, minimal. Never obstructs the world.
+Top-Left — Resource Bar:
+Horizontal pill-shaped panel, semi-transparent dark glass (rgba(10,10,15,0.75)), backdrop-filter: blur(12px). Icons + numbers for: 🌾 Food · 🪵 Wood · 🪨 Stone · 💰 Gold · ✨ Faith. Thin dividers between each.
+Top-Centre — World Clock:
+Day 14 · Autumn · Year 3. Elegant serif numeral display. Subtle pulsing dot indicating live simulation.
+Bottom-Centre — Time Controls:
+Five buttons: ⏸ ▶ ⏩x5 ⏭x20 🌙 Sleep to Next Season. Rounded pill style, glassy, icon-first. Active state glows softly.
+Right Panel — God Powers (collapsible):
+Vertical icon tray. Powers include:
+
+☀️ Bless — Boost all citizen Happiness +30 for 10 days (costs 50 Faith)
+⚡ Strike — Lightning bolt destroys a tile/entity (click to target)
+🌧️ Rain — Boost all farms for 5 days (costs 20 Faith)
+🌿 Grow Forest — Click a tile to instantly grow trees (costs 10 Faith)
+👶 Miracle Birth — Spawn a new citizen immediately (costs 80 Faith)
+💀 Plague — Spread disease event (no cost — this is punishment)
+
+Each power shows its Faith cost. Greyed out if insufficient Faith.
+Click-to-Inspect: Clicking any citizen opens a small floating card showing their Name, Age, Role, Hunger, Health, Happiness, and personal Gold. Clicking a tile shows its type and any resource yield data.
+Notification Feed (Bottom-Left):
+Slim toast messages slide in and auto-dismiss. Examples: "Elara died of old age, aged 72." / "New harvest: +48 Food." / "Warning: Faith is critically low." Max 4 visible at once. Oldest dismisses when 5th appears.
+
+EXECUTION RULES
+
+Never use placeholder procedural shapes if PNG assets exist and loaded successfully.
+Never write conflicting draw calls or duplicate render logic.
+Never start the game loop before all assets confirm loaded.
+Always Y-sort entities before drawing. Every frame.
+Always handle NPC pathfinding gracefully — if no path exists, the NPC idles, never freezes.
+The world must be alive and running autonomously within 3 seconds of the page loading.
+Output one clean, unified, production-ready codebase. No TODOs. No commented-out blocks. No unfinished functions.
