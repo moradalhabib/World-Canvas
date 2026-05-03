@@ -3724,20 +3724,29 @@ export class GameEngine {
         g.lineTo(0, ts / 4);    // bottom
         g.lineTo(-ts / 2, 0);   // left
         g.closePath();
-        // Phase 7 (Hi-Fi sprite drop, revision 4) — strict iso ground
-        // stamp per the user spec. TILE_HEIGHT = TILE_WIDTH / 2 so the
-        // diamond bounding box is ts × ts/2, centered on (sx, sy).
-        // After the per-tile g.translate(sx, sy), local origin IS the
-        // tile center, so the draw call is:
-        //   ctx.drawImage(img, -ts/2, -ts/4, ts, ts/2)
-        // No background fill, no stroke, no clipping. The asset-ready
-        // watcher rebakes within 1s of the PNG arriving, so any first
-        // paint before the sprite loads is transparent (intentionally).
-        const groundImg = this.spriteAssets.get(this.state.currentEra, "environment.ground");
+        // Phase 7 (Hi-Fi sprite drop, revision 5) — biome-aware iso
+        // diamond ground stamp. Each ground PNG is a native 2:1 iso
+        // diamond, drawn into the diamond bbox (ts × ts/2) centered
+        // on (sx, sy) — exactly the math from the user spec.
+        // grass + forest → grass_1.png, desert → sand_1.png, all
+        // other biomes (water, snow, mountain, crater) fall back to
+        // a flat color since no hi-fi PNG was supplied for them.
+        let groundKey: string | null = null;
+        if (tile.type === "grass" || tile.type === "forest") {
+          groundKey = "environment.ground_grass";
+        } else if (tile.type === "desert") {
+          groundKey = "environment.ground_sand";
+        }
+        const groundImg = groundKey
+          ? this.spriteAssets.get(this.state.currentEra, groundKey)
+          : null;
         if (groundImg) {
           g.drawImage(groundImg, -ts / 2, -ts / 4, ts, ts / 2);
+        } else {
+          // Procedural color fallback for biomes without a PNG.
+          g.fillStyle = this.liveTileColors[tile.type];
+          g.fill();
         }
-        void tile; // intentional — biome data unused under hi-fi mode
 
         g.restore();
       }
@@ -4254,7 +4263,11 @@ export class GameEngine {
     // after the rebake fires.
     if (!this.groundSpriteRebaked && now - this.lastAssetReadyCheckMs > 1000) {
       this.lastAssetReadyCheckMs = now;
-      if (this.spriteAssets.has(this.state.currentEra, "environment.ground")) {
+      const era = this.state.currentEra;
+      if (
+        this.spriteAssets.has(era, "environment.ground_grass") &&
+        this.spriteAssets.has(era, "environment.ground_sand")
+      ) {
         this.terrainDirty = true;
         this.groundSpriteRebaked = true;
       }

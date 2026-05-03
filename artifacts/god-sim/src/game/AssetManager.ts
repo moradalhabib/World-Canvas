@@ -58,11 +58,13 @@ export const ASSET_SKIN_MAP: Record<Era, SpriteSkin> = {
      * flips status=failed → renderer falls through to procedural). */
     "building.house_free": "assets/house_4.png",
     "environment.tree":   "assets/tree_3.png",
-    /* Phase 7 — base ground tile sprite, blitted into the cached
-     * terrainLayer for every "land" biome (grass / desert / snow).
-     * Forest, water, mountain, and crater keep their procedural fills
-     * because the asphalt diamond would erase their distinctive look. */
-    "environment.ground": "assets/asphalt.png",
+    /* Phase 7 (revision 5) — biome-specific iso diamond ground tiles.
+     * Each PNG is a native 2:1 iso diamond (256×128) so it stamps
+     * perfectly into the diamond bbox at draw time. The terrain bake
+     * dispatches by tile.type — grass + forest → grass_1, desert →
+     * sand_1, every other biome falls back to a procedural color. */
+    "environment.ground_grass": "assets/grass_1.png",
+    "environment.ground_sand":  "assets/sand_1.png",
     /* Buildings (one per BuildingId in buildings.ts) */
     "building.house_middle": "assets/medieval/buildings/house_middle.png",
     "building.house_high": "assets/medieval/buildings/house_high.png",
@@ -182,7 +184,8 @@ export class AssetManager {
     // actually shipped are logged loudly; the era-namespaced
     // placeholders that 404 by design stay quiet.
     const isHiFi =
-      key === "environment.ground" ||
+      key === "environment.ground_grass" ||
+      key === "environment.ground_sand" ||
       key === "environment.tree" ||
       key === "building.house_free";
     img.onload = () => {
