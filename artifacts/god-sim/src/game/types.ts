@@ -170,13 +170,17 @@ export interface Particle {
 }
 
 export const TILE_COLORS: Record<TileType, string> = {
+  // Phase 7 (premium pass) — desaturated, low-contrast palette so the
+  // procedural color fallbacks (water / snow / mountain / crater) sit
+  // quietly next to the saturated grass + sand PNGs and complement
+  // the dark-mode UI instead of fighting it.
   grass: "#4a7c3f",
-  water: "#2b6cb0",
+  water: "#3a5266",        // muted slate-teal, was bright royal blue
   forest: "#276749",
-  mountain: "#718096",
-  desert: "#d69e2e",
-  snow: "#e2e8f0",
-  crater: "#2a1410",
+  mountain: "#5a6068",     // soft graphite, was cool gray
+  desert: "#b89968",       // sand-colored fallback (overridden by sand_1.png)
+  snow: "#c4ccd4",         // dusty pale gray, was near-white
+  crater: "#2a2622",       // warm charcoal
 };
 
 export const TILE_BORDER_COLORS: Record<TileType, string> = {

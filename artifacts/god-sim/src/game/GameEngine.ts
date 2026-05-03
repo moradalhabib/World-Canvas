@@ -3224,12 +3224,16 @@ export class GameEngine {
     const H = this.viewH;
     if (this.vignetteGradient && this.vignetteSize.w === W && this.vignetteSize.h === H) return;
     const grad = this.ctx.createRadialGradient(
-      W / 2, H / 2, Math.min(W, H) * 0.35,
-      W / 2, H / 2, Math.max(W, H) * 0.75
+      W / 2, H / 2, Math.min(W, H) * 0.28,
+      W / 2, H / 2, Math.max(W, H) * 0.78
     );
+    // Phase 7 (premium pass) — deeper, smoother vignette. Pulled in
+    // (inner radius 0.28 vs the prior 0.35) and darker at the rim
+    // (0.70 vs 0.55) so the edges of the canvas frame the action
+    // with a cinematic falloff instead of a faint halo.
     grad.addColorStop(0, "rgba(0, 0, 0, 0)");
-    grad.addColorStop(0.7, "rgba(0, 0, 0, 0.18)");
-    grad.addColorStop(1, "rgba(0, 0, 0, 0.55)");
+    grad.addColorStop(0.6, "rgba(0, 0, 0, 0.22)");
+    grad.addColorStop(1, "rgba(8, 6, 14, 0.70)");
     this.vignetteGradient = grad;
     this.vignetteSize = { w: W, h: H };
   }
@@ -4499,9 +4503,31 @@ export class GameEngine {
       const pos = getCitizenVisualPos(c);
       const { sx, sy } = worldToIso(pos.col, pos.row, ts, rows);
       if (sx < minSx || sx > maxSx || sy < minSy || sy > maxSy) continue;
+      // Phase 7 (premium pass) — subtle "breathing" idle on every
+      // citizen. Per-citizen phase from a deterministic hash of name
+      // so each NPC pulses independently. ±1% vertical scale anchored
+      // at the feet (sx, sy) — the head bobs imperceptibly while the
+      // walk/run animation inside drawSingleCitizen plays as normal.
+      const cit = c;
+      const citPhase =
+        (cit.name.length * 17 + cit.name.charCodeAt(0)) * 0.27;
       queue.push({
         sortKey: pos.row + pos.col + 0.01,
-        draw: () => this.drawSingleCitizen(c, pos, sx, sy, tNow, ts),
+        draw: () => {
+          const breath = 1 + Math.sin(tNow * 2.2 + citPhase) * 0.01;
+          // Scale around (sx, sy) WITHOUT shifting the world frame:
+          // translate → scale → translate back. drawSingleCitizen still
+          // sees its original absolute coords, so SEEK_FOOD / ROGUE
+          // path-hint lines (which use worldToIso for the target end)
+          // render in the correct space. Only the y-axis is gently
+          // squashed/stretched around the citizen's feet.
+          ctx.save();
+          ctx.translate(sx, sy);
+          ctx.scale(1, breath);
+          ctx.translate(-sx, -sy);
+          this.drawSingleCitizen(cit, pos, sx, sy, tNow, ts);
+          ctx.restore();
+        },
       });
     }
 
@@ -4514,6 +4540,10 @@ export class GameEngine {
     if (treeImg) {
       const treeW = ts;
       const treeH = ts * (treeImg.naturalHeight / treeImg.naturalWidth);
+      // Phase 7 (premium pass) — subtle continuous sway. Each tree gets
+      // a per-cell phase offset so the forest breathes asynchronously
+      // instead of pulsing in lockstep. ±1.5% vertical scale, anchored
+      // at the trunk base (sx, sy) so the canopy gently rises/falls.
       for (let r = 0; r < grid.rows; r++) {
         for (let c = 0; c < grid.cols; c++) {
           if (grid.tiles[r][c].type !== "forest") continue;
@@ -4521,9 +4551,17 @@ export class GameEngine {
           if (sx < minSx || sx > maxSx || sy < minSy || sy > maxSy) continue;
           const dx = sx - treeW / 2;
           const dy = sy - treeH;
+          const phase = (r * 7 + c * 13) * 0.31;
           queue.push({
             sortKey: r + c,
-            draw: () => ctx.drawImage(treeImg, dx, dy, treeW, treeH),
+            draw: () => {
+              const sway = 1 + Math.sin(tNow * 1.3 + phase) * 0.015;
+              ctx.save();
+              ctx.translate(sx, sy);
+              ctx.scale(1, sway);
+              ctx.drawImage(treeImg, dx - sx, dy - sy, treeW, treeH);
+              ctx.restore();
+            },
           });
         }
       }
@@ -4597,7 +4635,19 @@ export class GameEngine {
       ctx.fillRect(0, 0, W, H);
     }
 
-    // Pass 6: vignette overlay
+    // Phase 7 (premium pass) — global warm tint to unify the disparate
+    // sprite palettes (chunky green grass, saturated yellow sand, mossy
+    // tree canopy, brown house) under one cohesive lighting key. Very
+    // subtle (alpha 0.06) so it grades the world without muddying the
+    // hi-fi PNG colors. Composited as overlay → keeps shadows dark and
+    // highlights warm, like a film LUT.
+    ctx.save();
+    ctx.globalCompositeOperation = "overlay";
+    ctx.fillStyle = "rgba(255, 200, 140, 0.08)";
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+
+    // Pass 6: vignette overlay (deepened for the premium pass)
     this.buildVignette();
     if (this.vignetteGradient) {
       ctx.fillStyle = this.vignetteGradient;
