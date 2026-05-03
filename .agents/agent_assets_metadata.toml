@@ -1,0 +1,20 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "-mM__mVKn7NtJOdQvEGPr"
+uri = "file://artifacts/god-sim/public/assets/asphalt.png"
+type = "image"
+title = "asphalt.png (256×256, 1.7 KB) — currently rendering on every tile"
+
+[[outputs]]
+id = "SOiwguIKvRZaOCgJT8wBF"
+uri = "file://artifacts/god-sim/public/assets/tree_3.png"
+type = "image"
+title = "tree_3.png (56×152) — currently stamped on every forest cell"
+
+[[outputs]]
+id = "Y8SxPM0_s3xMz07PvaE4t"
+uri = "file://artifacts/god-sim/public/assets/house_4.png"
+type = "image"
+title = "house_4.png (316×428) — currently stamped on every house_free building"
