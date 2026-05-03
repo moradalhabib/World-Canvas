@@ -77,7 +77,7 @@
     notifications: [],
     selected: null,     // {kind: "citizen"|"tile", ref}
     activePower: null,
-    camera: { x: 0, y: 0 },
+    camera: { x: 0, y: 0, zoom: 1 },
     cameraDrag: null,
     shake: { until: 0, mag: 0 },
     extinct: false,
@@ -261,10 +261,12 @@
       });
     }
 
-    // Center camera on village
-    const iso = isoToScreen(startC, startR);
-    State.camera.x = window.innerWidth / 2 - iso.x;
-    State.camera.y = window.innerHeight / 2 - iso.y;
+    // PHASE 1 spec — camera mathematically centres on the exact middle
+    // tile of the 24×24 grid on first load. Middle tile is (GRID/2, GRID/2).
+    State.camera.zoom = 1;
+    const midIso = isoToScreen(GRID_COLS / 2, GRID_ROWS / 2);
+    State.camera.x = window.innerWidth / 2 - midIso.x * State.camera.zoom;
+    State.camera.y = window.innerHeight / 2 - midIso.y * State.camera.zoom;
   }
 
   function spawnCitizen({ home, role, gender, age }) {
@@ -883,13 +885,14 @@
         });
       }
     }
-    // emit weather particles per frame
+    // emit weather particles per frame — pure screen-space coords now
+    const W = window.innerWidth;
     if (SEASONS[State.time.season] === "Autumn") {
       if (Math.random() < 0.4) {
         State.particles.push({
           kind: "leaf",
-          x: Math.random() * window.innerWidth - State.camera.x,
-          y: -State.camera.y + Math.random() * 40,
+          x: Math.random() * W,
+          y: Math.random() * 40,
           vx: 0.3 + Math.random() * 0.3, vy: 0.2 + Math.random() * 0.3,
           life: 6000, born: now, rot: Math.random() * Math.PI * 2,
         });
@@ -899,8 +902,8 @@
       if (Math.random() < 0.7) {
         State.particles.push({
           kind: "snow",
-          x: Math.random() * window.innerWidth - State.camera.x,
-          y: -State.camera.y + Math.random() * 40,
+          x: Math.random() * W,
+          y: Math.random() * 40,
           vx: -0.05 + Math.random() * 0.1, vy: 0.4 + Math.random() * 0.3,
           life: 5000, born: now, r: 1.5 + Math.random() * 1.5,
         });
@@ -910,8 +913,8 @@
       if (Math.random() < 1.0) {
         State.particles.push({
           kind: "rain",
-          x: Math.random() * window.innerWidth - State.camera.x,
-          y: -State.camera.y + Math.random() * 40,
+          x: Math.random() * W,
+          y: Math.random() * 40,
           vx: -0.3, vy: 2.2,
           life: 1200, born: now,
         });
@@ -957,7 +960,11 @@
     ctx.fillStyle = "#0a090e";
     ctx.fillRect(0, 0, W, H);
 
-    // Camera + shake
+    // Camera + shake — PHASE 1: pan + zoom passed through the canvas
+    // transform. This is the equivalent of:
+    //   screenX = (col-row) * TILE_W/2 * camera.zoom + camera.x
+    //   screenY = (col+row) * TILE_H/2 * camera.zoom + camera.y
+    // for every world-space coordinate produced by isoToScreen().
     let shakeX = 0, shakeY = 0;
     if (now < State.shake.until) {
       shakeX = (Math.random() - 0.5) * State.shake.mag;
@@ -965,6 +972,7 @@
     }
     ctx.save();
     ctx.translate(State.camera.x + shakeX, State.camera.y + shakeY);
+    ctx.scale(State.camera.zoom, State.camera.zoom);
 
     // ===== Pass 1: ground tiles =====
     drawGround(now);
@@ -1001,10 +1009,9 @@
     ctx.restore();
 
     // ===== Pass 4: screen-space particles (rain, snow, leaves, flash) =====
-    ctx.save();
-    ctx.translate(State.camera.x, State.camera.y);
+    // These live in pure screen-space — no camera/zoom applied — so weather
+    // rolls across the viewport at constant density regardless of zoom level.
     drawScreenParticles(now);
-    ctx.restore();
 
     // ===== Pass 5: warm tint (multiply) =====
     ctx.save();
@@ -1490,11 +1497,27 @@
       const wasDrag = State.cameraDrag.moved;
       State.cameraDrag = null;
       if (wasDrag) return;
-      // click-to-target / inspect
-      const sx = e.clientX - State.camera.x;
-      const sy = e.clientY - State.camera.y;
-      handleWorldClick(sx, sy);
+      // click-to-target / inspect — convert screen pixel into WORLD-space
+      // coords (inverse of the render transform: subtract camera, divide by zoom)
+      const wx = (e.clientX - State.camera.x) / State.camera.zoom;
+      const wy = (e.clientY - State.camera.y) / State.camera.zoom;
+      handleWorldClick(wx, wy, e.clientX, e.clientY);
     });
+
+    // PHASE 1 spec — mouse wheel zoom, clamped 0.5×–2.0×, centred on cursor
+    canvas.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const oldZoom = State.camera.zoom;
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      const newZoom = Math.max(0.5, Math.min(2.0, oldZoom * factor));
+      if (newZoom === oldZoom) return;
+      // Anchor: keep the world point under the cursor stationary
+      const wx = (e.clientX - State.camera.x) / oldZoom;
+      const wy = (e.clientY - State.camera.y) / oldZoom;
+      State.camera.zoom = newZoom;
+      State.camera.x = e.clientX - wx * newZoom;
+      State.camera.y = e.clientY - wy * newZoom;
+    }, { passive: false });
 
     document.querySelectorAll(".tc-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1548,8 +1571,8 @@
     });
   }
 
-  function handleWorldClick(sx, sy) {
-    const { col, row } = screenToIso(sx, sy);
+  function handleWorldClick(wx, wy /*, screenX, screenY */) {
+    const { col, row } = screenToIso(wx, wy);
     const r = Math.round(row), c = Math.round(col);
     if (!inBounds(r, c)) return;
 
@@ -1561,13 +1584,14 @@
       return;
     }
 
-    // Pick citizen first (closest to click)
+    // Pick citizen first (closest in WORLD space, threshold scaled to zoom)
+    const pickRadius = 22 / State.camera.zoom;
     let bestCit = null, bestD = Infinity;
     for (const ct of State.citizens) {
       const iso = isoToScreen(ct.vcol, ct.vrow);
-      const dx = iso.x - sx, dy = (iso.y - 28) - sy;
+      const dx = iso.x - wx, dy = (iso.y - 28) - wy;
       const d = Math.sqrt(dx * dx + dy * dy);
-      if (d < 22 && d < bestD) { bestD = d; bestCit = ct; }
+      if (d < pickRadius && d < bestD) { bestD = d; bestCit = ct; }
     }
     if (bestCit) {
       State.selected = { kind: "citizen", ref: bestCit };
