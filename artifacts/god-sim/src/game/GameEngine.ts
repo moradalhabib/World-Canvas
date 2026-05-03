@@ -207,6 +207,18 @@ export class GameEngine {
    * Cleared back to false immediately after a successful save() write.
    */
   private dirty = false;
+  /**
+   * Phase 7 — Hi-Fi sprite drop. The terrainLayer is baked ONCE at
+   * boot, but the ground sprite (`environment.ground`) loads
+   * asynchronously over the network. This flag flips true the first
+   * time the ground sprite is detected ready, triggering a single
+   * terrain rebake so the asphalt diamond actually appears (without
+   * it, the bake races the sprite load and we'd render forever with
+   * the procedural color fill). Rechecked at most once per second
+   * inside the main loop.
+   */
+  private groundSpriteRebaked = false;
+  private lastAssetReadyCheckMs = 0;
   private accumulatedMonthFrac = 0;
 
   private touch1: Touch | null = null;
@@ -3723,6 +3735,29 @@ export class GameEngine {
         g.lineWidth = 0.75;
         g.stroke();
 
+        // Phase 7 — Hi-Fi ground sprite. Blit the asphalt diamond on top
+        // of the procedural color fill for "land" biomes (grass / desert
+        // / snow). The sprite already covers the diamond bounds exactly,
+        // so it visually replaces the color while leaving the dark edge
+        // stroke as a tile boundary hint. Forest stays procedural so the
+        // tree-Y-sort overlay reads against a green ground; water /
+        // mountain / crater have their own distinctive textures.
+        if (
+          (tile.type === "grass" || tile.type === "desert" || tile.type === "snow") &&
+          this.spriteAssets.has(this.state.currentEra, "environment.ground")
+        ) {
+          // tryDraw uses top-left anchor for environment.ground; the
+          // tile diamond's bounding box origin is (-ts/2, -ts/4).
+          this.spriteAssets.tryDraw(
+            g,
+            this.state.currentEra,
+            "environment.ground",
+            -ts / 2,
+            -ts / 4,
+            ts,
+          );
+        }
+
         // Phase 15: Procedural clutter pass — pebbles, wildflowers, and
         // grass tufts scattered onto grass / forest / desert / snow tiles
         // with a deterministic per-tile RNG so two adjacent screens never
@@ -4265,6 +4300,19 @@ export class GameEngine {
       }
     }
 
+    // Phase 7 — async asset-ready watcher. Once per second, check if
+    // the ground sprite has finished loading; if so, invalidate the
+    // baked terrainLayer exactly once so the next render() picks up
+    // the asphalt diamond. Cheap (single Map lookup) and self-disarms
+    // after the rebake fires.
+    if (!this.groundSpriteRebaked && now - this.lastAssetReadyCheckMs > 1000) {
+      this.lastAssetReadyCheckMs = now;
+      if (this.spriteAssets.has(this.state.currentEra, "environment.ground")) {
+        this.terrainDirty = true;
+        this.groundSpriteRebaked = true;
+      }
+    }
+
     this.render();
 
     // Phase 26: any unpaused frame is a frame that just mutated game
@@ -4478,6 +4526,37 @@ export class GameEngine {
         sortKey: pos.row + pos.col + 0.01,
         draw: () => this.drawSingleCitizen(c, pos, sx, sy, tNow, ts),
       });
+    }
+
+    // Phase 7 — Hi-Fi tree sprites on forest tiles. Trees MUST be in
+    // the entity sort queue (not baked into terrainLayer) so they
+    // correctly Y-sort against buildings + citizens: a tree on a tile
+    // "in front" of a house occludes the house's facade, exactly as
+    // the user's hi-fi spec requires. Only emits queue entries when
+    // the tree sprite is actually loaded — otherwise the procedural
+    // forest clutter inside the bake remains the visual.
+    if (this.spriteAssets.has(this.state.currentEra, "environment.tree")) {
+      const era = this.state.currentEra;
+      // Cull to camera viewport in tile space — converting screen
+      // bounds back to (row, col) is overkill, so we just iterate the
+      // grid and reject by iso projection like every other queue pass.
+      for (let r = 0; r < grid.rows; r++) {
+        for (let c = 0; c < grid.cols; c++) {
+          if (grid.tiles[r][c].type !== "forest") continue;
+          const { sx, sy } = worldToIso(c, r, ts, rows);
+          if (sx < minSx || sx > maxSx || sy < minSy || sy > maxSy) continue;
+          const x = sx - ts * 0.5;
+          const y = sy - ts * 0.5;
+          // sortKey = row + col with no epsilon → trees draw at exactly
+          // the same depth as a building on the same tile (which never
+          // happens — buildings replace forests on placement) and
+          // BEHIND a citizen on the same tile (citizen sortKey +0.01).
+          queue.push({
+            sortKey: r + c,
+            draw: () => this.spriteAssets.tryDraw(ctx, era, "environment.tree", x, y, ts),
+          });
+        }
+      }
     }
 
     // Phase 16/17: Animals — interpolated visual pos like citizens, sortKey

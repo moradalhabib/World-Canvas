@@ -51,8 +51,19 @@ export type SpriteSkin = Record<string, string>;
  */
 export const ASSET_SKIN_MAP: Record<Era, SpriteSkin> = {
   MEDIEVAL: {
+    /* Phase 7 (Hi-Fi sprite drop) — three real PNGs live at the root
+     * `assets/` path. They override the era-namespaced placeholders
+     * below so the renderer picks them up automatically. The remaining
+     * placeholder paths still 404 (no sprite on disk → AssetManager
+     * flips status=failed → renderer falls through to procedural). */
+    "building.house_free": "assets/house_4.png",
+    "environment.tree":   "assets/tree_3.png",
+    /* Phase 7 — base ground tile sprite, blitted into the cached
+     * terrainLayer for every "land" biome (grass / desert / snow).
+     * Forest, water, mountain, and crater keep their procedural fills
+     * because the asphalt diamond would erase their distinctive look. */
+    "environment.ground": "assets/asphalt.png",
     /* Buildings (one per BuildingId in buildings.ts) */
-    "building.house_free": "assets/medieval/buildings/house_free.png",
     "building.house_middle": "assets/medieval/buildings/house_middle.png",
     "building.house_high": "assets/medieval/buildings/house_high.png",
     "building.farm": "assets/medieval/buildings/farm.png",
@@ -72,7 +83,6 @@ export const ASSET_SKIN_MAP: Record<Era, SpriteSkin> = {
     "character.child": "assets/medieval/characters/child.png",
     "character.infant": "assets/medieval/characters/infant.png",
     /* Environment / fauna */
-    "environment.tree": "assets/medieval/environment/tree.png",
     "environment.sheep": "assets/medieval/environment/sheep.png",
     "environment.wolf": "assets/medieval/environment/wolf.png",
   },
@@ -92,7 +102,11 @@ export const ASSET_SKIN_MAP: Record<Era, SpriteSkin> = {
 export type SpriteAnchor = "bottom-center" | "center" | "top-left";
 
 const ANCHOR_OVERRIDES: Record<string, SpriteAnchor> = {
-  // (none yet — every entity uses bottom-center for iso ground placement)
+  // Phase 7 — the ground tile sprite is the iso diamond ITSELF, so
+  // bottom-center would push it down to "stand on" the diamond instead
+  // of filling it. Use top-left so the bake pass can place it exactly
+  // at the diamond's bounding-box origin.
+  "environment.ground": "top-left",
 };
 
 export function anchorFor(key: string): SpriteAnchor {
@@ -230,8 +244,21 @@ export class AssetManager {
         break;
       case "top-left":
       default:
+        // Phase 7: top-left anchor draws the sprite at exactly (x, y)
+        // sized w×h preserving the source aspect ratio. Used for the
+        // ground tile sprite which IS the iso diamond and needs to
+        // fill its bounding box rather than "stand on" it. The bake
+        // pass passes (-ts/2, -ts/4) so the diamond's bounding box
+        // origin lines up with the canvas origin after translate.
+        // For the ground sprite specifically, we override h to ts/2
+        // (the diamond's bbox height) to avoid any vertical scaling
+        // surprise from a non-2:1 source PNG.
         dx = x;
         dy = y;
+        if (key === "environment.ground") {
+          ctx.drawImage(img, dx, dy, ts, ts / 2);
+          return true;
+        }
         break;
     }
     ctx.drawImage(img, dx, dy, w, h);
