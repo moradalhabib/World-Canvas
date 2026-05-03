@@ -173,6 +173,113 @@
       #extinction button { background: rgba(212,175,106,0.12); border: 1px solid var(--gold); color: var(--gold); padding: 14px 36px; font-size: 14px; letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; border-radius: 8px; font-weight: 600; transition: all 0.2s; }
       #extinction button:hover { background: var(--gold); color: #0c0a0d; }
 
+      /* ---------- INSPECT EXTRAS — thought, badges, memory, follow ---------- */
+      #inspect .thought {
+        font-style: italic; color: var(--text); font-size: 13px; line-height: 1.45;
+        margin: 6px 0 12px; padding: 8px 12px; border-left: 2px solid var(--gold);
+        background: rgba(212, 175, 106, 0.06); border-radius: 4px;
+      }
+      #inspect .badges { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 12px; }
+      #inspect .badge {
+        font-size: 10px; padding: 3px 8px; border-radius: 10px;
+        background: rgba(255,255,255,0.06); border: 1px solid rgba(255,220,160,0.15);
+        color: var(--text); letter-spacing: 0.04em; text-transform: uppercase; font-weight: 600;
+      }
+      #inspect .badge.tier-3 { background: rgba(138,95,161,0.18); border-color: #8a5fa1; color: #d4b6e0; }
+      #inspect .badge.tier-4 { background: rgba(212,175,106,0.22); border-color: var(--gold); color: var(--gold); }
+      #inspect .badge.tier-5 { background: rgba(200,151,204,0.22); border-color: #c897cc; color: #e7c8eb; }
+      #inspect .badge.mood-grieving { background: rgba(120,140,180,0.18); color: #b6c4dc; }
+      #inspect .badge.mood-joyful { background: rgba(111,161,90,0.18); color: #b6e0a3; }
+      #inspect .badge.mood-angry, #inspect .badge.mood-hungry, #inspect .badge.mood-sick { background: rgba(194,90,74,0.18); color: #e6b1a8; }
+      #inspect .section-title {
+        font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+        color: var(--gold); margin: 14px 0 6px; font-weight: 700;
+      }
+      #inspect .rels div { font-size: 12px; padding: 2px 0; color: var(--text); }
+      #inspect .rels .lbl { color: var(--text-dim); margin-right: 4px; }
+      #inspect .rels .dim, #inspect .memory .dim { color: var(--text-dim); font-style: italic; }
+      #inspect .person-link { color: var(--gold); cursor: pointer; text-decoration: underline; text-decoration-color: rgba(212,175,106,0.4); }
+      #inspect .person-link:hover { text-decoration-color: var(--gold); }
+      #inspect .memory { list-style: none; padding: 0; margin: 0; font-size: 11px; line-height: 1.55; color: var(--text); }
+      #inspect .memory li { padding: 3px 0; border-bottom: 1px solid rgba(255,220,160,0.05); }
+      #inspect .memory li:last-child { border-bottom: none; }
+      #inspect .follow-btn {
+        margin-top: 14px; width: 100%; padding: 9px;
+        background: rgba(212,175,106,0.12); border: 1px solid var(--gold);
+        color: var(--gold); border-radius: 7px; font-size: 12px; font-weight: 700;
+        letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; transition: all 0.15s;
+      }
+      #inspect .follow-btn:hover { background: var(--gold); color: #0c0a0d; }
+
+      /* ---------- KINGDOM DASHBOARD (press K) ---------- */
+      #dashboard {
+        position: fixed; inset: 0; background: rgba(7, 6, 10, 0.85);
+        backdrop-filter: blur(10px); display: none; z-index: 400;
+        align-items: center; justify-content: center;
+      }
+      #dashboard.show { display: flex; animation: extFade 0.3s ease; }
+      .dash-shell {
+        background: var(--glass); border: 1px solid var(--glass-edge);
+        border-radius: 18px; padding: 28px 32px; min-width: 720px; max-width: 880px;
+        box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+      }
+      .dash-shell h2 {
+        font-family: "Cormorant Garamond", serif; font-size: 32px;
+        color: var(--gold); margin: 0 0 4px; letter-spacing: 0.06em;
+      }
+      .dash-shell .dash-sub { color: var(--text-dim); font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 22px; }
+      .dash-shell .close-x { position: absolute; top: 18px; right: 22px; cursor: pointer; color: var(--text-dim); font-size: 22px; }
+      .dash-shell .close-x:hover { color: var(--gold); }
+      .dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      .dash-card { background: rgba(20, 18, 26, 0.55); padding: 16px 18px; border-radius: 12px; border: 1px solid rgba(255,220,160,0.08); }
+      .dash-label { font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); margin-bottom: 10px; font-weight: 700; }
+      .dash-big { font-family: "Cormorant Garamond", serif; font-size: 38px; color: var(--text); line-height: 1; margin-bottom: 12px; }
+      .dash-tiers { display: flex; flex-direction: column; gap: 4px; }
+      .dash-tier { font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+      .tier-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+      .tier-dot.tier-1 { background: #7a8090; }
+      .tier-dot.tier-2 { background: #5e7fa4; }
+      .tier-dot.tier-3 { background: #8a5fa1; }
+      .tier-dot.tier-4 { background: #d4af6a; }
+      .tier-dot.tier-5 { background: #c897cc; }
+      .dash-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 13px; color: var(--text); border-bottom: 1px solid rgba(255,220,160,0.05); }
+      .dash-row:last-child { border-bottom: none; }
+      .dash-row span { color: var(--text-dim); }
+      .dash-row b { color: var(--text); font-weight: 600; }
+      .dash-row.dim { color: var(--text-dim); font-style: italic; }
+      .light { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; box-shadow: 0 0 8px currentColor; }
+      .light-green { background: var(--good); color: var(--good); }
+      .light-amber { background: #d4a64a; color: #d4a64a; }
+      .light-red { background: var(--danger); color: var(--danger); }
+
+      /* ---------- "YOU WERE AWAY" RECAP MODAL ---------- */
+      #away-modal {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background: var(--glass); border: 1px solid var(--gold);
+        border-radius: 16px; padding: 26px 30px; min-width: 380px; max-width: 480px;
+        z-index: 450; display: none; box-shadow: 0 24px 80px rgba(0,0,0,0.7), 0 0 60px rgba(212,175,106,0.25);
+      }
+      #away-modal.show { display: block; animation: awaySlide 0.45s cubic-bezier(.2,1,.4,1); }
+      @keyframes awaySlide { from { opacity: 0; transform: translate(-50%, -45%); } to { opacity: 1; transform: translate(-50%, -50%); } }
+      #away-modal h2 { font-family: "Cormorant Garamond", serif; font-size: 26px; color: var(--gold); margin: 0 0 4px; letter-spacing: 0.06em; }
+      #away-modal .sub { color: var(--text-dim); font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 18px; }
+      #away-modal ul { list-style: none; padding: 0; margin: 0; max-height: 320px; overflow-y: auto; }
+      #away-modal li { padding: 9px 12px; border-left: 2px solid var(--gold); margin-bottom: 6px; background: rgba(212,175,106,0.05); border-radius: 4px; font-size: 13px; line-height: 1.45; }
+      #away-modal button { margin-top: 18px; width: 100%; padding: 11px; background: rgba(212,175,106,0.12); border: 1px solid var(--gold); color: var(--gold); border-radius: 7px; font-size: 12px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; transition: all 0.15s; }
+      #away-modal button:hover { background: var(--gold); color: #0c0a0d; }
+
+      /* ---------- HINT (K opens dashboard) ---------- */
+      #hint {
+        position: fixed; bottom: 22px; right: 110px;
+        font-size: 11px; color: var(--text-dim); letter-spacing: 0.1em;
+        text-transform: uppercase; pointer-events: none;
+      }
+      #hint kbd {
+        background: rgba(212,175,106,0.14); border: 1px solid rgba(212,175,106,0.4);
+        color: var(--gold); padding: 2px 7px; border-radius: 4px; font-family: inherit;
+        font-size: 11px; margin: 0 4px; font-weight: 700;
+      }
+
       /* ---------- TOOLTIP ---------- */
       .tip {
         position: absolute; bottom: 110%; left: 50%; transform: translateX(-50%);
@@ -234,6 +341,27 @@
 
     <!-- Inspect card -->
     <div id="inspect" class="panel"></div>
+
+    <!-- Hint -->
+    <div id="hint">Press <kbd>K</kbd> for Kingdom · <kbd>Esc</kbd> to close</div>
+
+    <!-- Kingdom Dashboard -->
+    <div id="dashboard">
+      <div class="dash-shell" style="position:relative;">
+        <span class="close-x" id="dashboard-close">×</span>
+        <h2>The Kingdom</h2>
+        <div class="dash-sub">A view across all your dominions</div>
+        <div id="dashboard-body"></div>
+      </div>
+    </div>
+
+    <!-- "You Were Away" Recap -->
+    <div id="away-modal">
+      <h2>While you were away…</h2>
+      <div class="sub">Events of the realm</div>
+      <ul id="away-list"></ul>
+      <button id="away-close">Continue</button>
+    </div>
 
     <!-- Extinction Overlay -->
     <div id="extinction">

@@ -51,6 +51,143 @@
 
   const POWER_COSTS = { bless: 50, strike: 15, rain: 20, grow: 10, birth: 80, plague: 0 };
 
+  // ---------------- TIERS / TRAITS / THOUGHTS ----------------
+  const TIER_BADGE = { 1: "Labourer", 2: "Middle Class", 3: "Noble", 4: "King", 5: "Queen" };
+  const TIER_TINTS = { 1: "#7a8090", 2: "#5e7fa4", 3: "#8a5fa1", 4: "#d4af6a", 5: "#c897cc" };
+  const ROLE_TIER  = { Farmer: 1, Builder: 1, Woodcutter: 1, Merchant: 2, Priest: 2, Guard: 2, Noble: 3, RoyalGuard: 2, King: 4, Queen: 5 };
+  const TRAITS     = ["Hardworking", "Lazy", "Greedy", "Generous", "Fearful", "Brave", "Devout", "Cynical"];
+  const TIER_PROMOTE_GOLD = { 1: 200, 2: 500 };
+  const TIER_DEMOTE_GOLD  = { 2: 20,  3: 50 };
+
+  // 40+ contextual thoughts indexed by citizen state
+  const THOUGHTS = {
+    hungry: [
+      "My stomach is empty. I hope someone farms soon.",
+      "I would trade good gold for one warm loaf.",
+      "When did I last truly eat? The days blur.",
+      "If the harvest fails again, I do not know what we will do.",
+    ],
+    sick: [
+      "My body aches. I can barely lift the axe.",
+      "A cold sweat won't leave me. I should rest.",
+      "The healer's hut feels so far away today.",
+    ],
+    grieving: [
+      "The world feels quieter without them.",
+      "I keep turning to speak, then remember.",
+      "Time will not knit this wound — but I will keep walking.",
+    ],
+    joyful: [
+      "The sun feels warm on my back today.",
+      "Bread, friends, and a roof — what more could one ask?",
+      "I caught myself humming. It surprised me.",
+    ],
+    rich: [
+      "Life is good. Perhaps I can build something greater.",
+      "I have more coin than my father ever held. Strange feeling.",
+      "Soon, perhaps, I will own land of my own.",
+    ],
+    blessed: [
+      "I felt something divine just now. A warmth I can't explain.",
+      "There is a presence in the air. It watches kindly.",
+      "I will light a candle at the church tonight.",
+    ],
+    feared: [
+      "The sky cracked open. Whatever lives up there is watching.",
+      "I do not know if the gods love us or merely tolerate us.",
+      "Best to keep one's head down for a few days.",
+    ],
+    noble: [
+      "The King's edict this season is foolish. We nobles suffer for it.",
+      "My estate produces well, but the peasantry grows restless.",
+      "A clever Noble outlives ten brave ones.",
+    ],
+    king: [
+      "The weight of a kingdom never truly lifts.",
+      "Even a King must sleep. Briefly.",
+      "If I fall, who will hold this together?",
+    ],
+    queen: [
+      "Faith flows where joy flows. I must keep the court bright.",
+      "The chapel needs new candles. I shall see to it.",
+      "A Queen is the heart of a realm — no smaller a thing.",
+    ],
+    devout: [
+      "I shall walk to the church before dusk.",
+      "Every prayer, however small, is heard.",
+    ],
+    greedy: [
+      "There must be a way to turn this season's surplus into gold.",
+      "I should check the market prices again.",
+    ],
+    lazy: [
+      "Surely the work can wait one more hour.",
+      "Let the others sweat. I have the shade.",
+    ],
+    hardworking: [
+      "Two more loads before I rest.",
+      "The wood will not split itself.",
+    ],
+    fearful: [
+      "Strange how the wind sounds tonight.",
+      "I should not have stayed out so late.",
+    ],
+    brave: [
+      "Let trouble come. I have stood worse.",
+      "Better to face the wolf than cower from the shadow.",
+    ],
+    cynical: [
+      "Every promise rots eventually. Even the King's.",
+      "Faith? Faith is a tax on the gullible.",
+    ],
+    generous: [
+      "I should bring an extra loaf for old Mira tomorrow.",
+      "Coin is heaviest when you have too much of it.",
+    ],
+    arrested: [
+      "These iron bars are cold against the back.",
+      "I should not have done it. But I did.",
+    ],
+    drinking: [
+      "One more cup, then home. Truly.",
+      "The tavern is the only honest court.",
+    ],
+    working: [
+      "Steady hands. Steady work.",
+      "Another day, another small piece of the kingdom.",
+    ],
+    resting: [
+      "The hearth is enough tonight.",
+      "Sleep, then begin again.",
+    ],
+    default: [
+      "Just another day under the open sky.",
+      "I wonder what the rest of the world looks like.",
+      "The fields are quiet today.",
+    ],
+  };
+  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  function pickThought(c) {
+    if (c.state === "JAIL" || c.state === "ARREST") return pick(THOUGHTS.arrested);
+    if (c.griefUntilDay > 0 && State.time.totalDays < c.griefUntilDay) return pick(THOUGHTS.grieving);
+    if (c.tier === 4) return pick(THOUGHTS.king);
+    if (c.tier === 5) return pick(THOUGHTS.queen);
+    if (State.time.totalDays < c.blessUntilDay) return pick(THOUGHTS.blessed);
+    if (State.time.totalDays < c.feardUntilDay) return pick(THOUGHTS.feared);
+    if (c.hunger < 30) return pick(THOUGHTS.hungry);
+    if (c.sickness > 40) return pick(THOUGHTS.sick);
+    if (c.state === "DRINK") return pick(THOUGHTS.drinking);
+    if (c.state === "REST") return pick(THOUGHTS.resting);
+    if (c.tier === 3) return pick(THOUGHTS.noble);
+    if (c.gold > 150) return pick(THOUGHTS.rich);
+    if (c.happiness > 75) return pick(THOUGHTS.joyful);
+    // trait-flavored idle thoughts
+    const traitKey = c.trait && c.trait.toLowerCase();
+    if (traitKey && THOUGHTS[traitKey]) return pick(THOUGHTS[traitKey]);
+    if (c.state === "WORK") return pick(THOUGHTS.working);
+    return pick(THOUGHTS.default);
+  }
+
   const FIRST_NAMES_M = ["Aldric","Bram","Cedric","Dorian","Edmund","Finn","Gideon","Hagen","Ivar","Jorvik","Kael","Lior","Magnus","Niall","Orin","Percival","Quill","Rorik","Soren","Theron","Ulric","Varek","Wren","Xander","Yoren","Zeph"];
   const FIRST_NAMES_F = ["Aelis","Briga","Calla","Darcy","Elara","Fiora","Greta","Hilda","Isolde","Juno","Kaeli","Lyra","Mira","Nyssa","Orla","Petra","Quinn","Rhea","Sable","Tessa","Una","Vesna","Wren","Xara","Ylva","Zara"];
   const SURNAMES = ["Ashford","Blackwood","Crane","Duvalle","Emberly","Fairwynd","Greaves","Hollis","Ironwood","Jansen","Kestrel","Larkspur","Marrow","Northcott","Oakley","Parnell","Quinton","Ravenshaw","Stoneford","Thorne","Ulster","Vance","Whitmore","Yarrow","Zellan"];
@@ -85,6 +222,15 @@
     lastBlessUntil: 0,
     rainBoostUntilDay: 0,
     plagueActive: false,
+    // Phase 2 / 7 / 8 — living world state
+    royalty: { kingId: null, queenId: null, palaceId: null, lastEdictDay: 0, edict: null, founded: false },
+    treasury: 0,             // national gold reserve, separate from personal NPC gold
+    army: 0,                 // count of RoyalGuard citizens
+    awayLog: [],             // {day, text} significant events buffered while sped up
+    awayActive: false,       // true while time scale > 1
+    lastEventDay: 0,         // for the Living Event Engine cadence
+    followId: null,          // citizen id the camera is following
+    dashboardOpen: false,
   };
   const newId = () => State.nextId++;
 
@@ -269,7 +415,7 @@
     State.camera.y = window.innerHeight / 2 - midIso.y * State.camera.zoom;
   }
 
-  function spawnCitizen({ home, role, gender, age }) {
+  function spawnCitizen({ home, role, gender, age, parents, tier }) {
     const lifespan = 50 + Math.floor(Math.random() * 30);
     const work = pickWorkplace(role);
     const c = {
@@ -301,10 +447,39 @@
       sway: Math.random() * Math.PI * 2,
       bobPhase: Math.random() * Math.PI * 2,
       blessUntilDay: 0,
+      feardUntilDay: 0,
       dissolveAt: 0,
+      // Phase 2 — living soul
+      tier: tier || ROLE_TIER[role] || 1,
+      trait: TRAITS[Math.floor(Math.random() * TRAITS.length)],
+      thought: "",
+      partnerId: null,
+      childIds: [],
+      parentIds: parents ? parents.map((p) => p.id) : [],
+      friendIds: [],
+      interactions: {},        // { otherId: count } for partnership thresholding
+      memory: [],              // last 5 life events
+      lastSocialDay: 0,
+      lastThoughtDay: -1,
+      griefUntilDay: 0,
+      isElder: false,
+      followGroupId: null,     // for Royal Guards trailing the King
+      formationSlot: -1,       // 0..3 cardinal index for guard formation
     };
     State.citizens.push(c);
+    if (parents && parents.length) {
+      for (const p of parents) {
+        if (!p.childIds.includes(c.id)) p.childIds.push(c.id);
+        addMemory(p, `${c.name} was born — Year ${State.time.year}.`);
+      }
+    }
+    addMemory(c, `Born in Year ${State.time.year}.`);
     return c;
+  }
+
+  function addMemory(c, text) {
+    c.memory.push({ day: State.time.totalDays, year: State.time.year, text });
+    if (c.memory.length > 5) c.memory.shift();
   }
 
   function pickWorkplace(role) {
@@ -420,6 +595,19 @@
     // Animals
     for (const a of State.animals) tickAnimal(a);
 
+    // Phase 2 — social life: random pairs of adjacent adults bond
+    tickSocial();
+
+    // Phase 7 — Royal succession + Royal Guard formation
+    tickRoyalty();
+    tickRoyalGuards();
+
+    // Phase 8 — Living Event Engine fires every 10 in-game days
+    if (State.time.totalDays - State.lastEventDay >= 10) {
+      State.lastEventDay = State.time.totalDays;
+      rollLivingEvent();
+    }
+
     // Births: any two adult opposite-gender citizens, both in a house, both happy
     maybeBirth();
 
@@ -449,9 +637,7 @@
     // Cull dead citizens (after dissolve animation completes)
     State.citizens = State.citizens.filter((c) => c.state !== "DEAD" || performance.now() < c.dissolveAt + 500);
 
-    // Succession — keep an Elder flag on the oldest living adult.
-    // When the current Elder dies (or there is none), promote the next eldest
-    // and announce it. Gives the player a focal point in the village.
+    // Elder = oldest living adult (separate from royalty)
     const livingAdults = State.citizens.filter((c) => c.state !== "DEAD" && c.age >= 18);
     const currentElder = livingAdults.find((c) => c.isElder);
     if (!currentElder && livingAdults.length > 0) {
@@ -460,11 +646,253 @@
       heir.isElder = true;
       if (State.time.totalDays > 1) {
         pushNotif(`${heir.name} is now Elder of the village.`, "divine");
+        addAway(`${heir.name} became Elder of the village.`);
       }
     }
 
+    // Tier promotion / demotion — checked once per Season (day 1 of season)
+    if (State.time.day === 1) checkTierMobility();
+
+    // Update army count from RoyalGuard role
+    State.army = State.citizens.filter((c) => c.role === "RoyalGuard" && c.state !== "DEAD").length;
+
     // Extinction check
     if (State.citizens.length === 0 && !State.extinct) triggerExtinction();
+  }
+
+  // ---------------- TIER MOBILITY ----------------
+  function checkTierMobility() {
+    for (const c of State.citizens) {
+      if (c.state === "DEAD" || c.tier >= 4) continue;
+      // Promote
+      if (c.tier < 3) {
+        const need = TIER_PROMOTE_GOLD[c.tier];
+        if (need && c.gold >= need && c.home) {
+          c.tier++;
+          if (c.tier === 2 && c.role !== "Merchant" && c.role !== "Priest") c.role = "Merchant";
+          if (c.tier === 3) c.role = "Noble";
+          pushNotif(`${c.name} has risen to ${TIER_BADGE[c.tier]}.`, "divine");
+          addAway(`${c.name} rose to ${TIER_BADGE[c.tier]}.`);
+          addMemory(c, `Rose to ${TIER_BADGE[c.tier]} — Year ${State.time.year}.`);
+        }
+      }
+      // Demote
+      if (c.tier > 1) {
+        const floor = TIER_DEMOTE_GOLD[c.tier];
+        if (floor && c.gold < floor) {
+          c.tier--;
+          pushNotif(`${c.name} fell to ${TIER_BADGE[c.tier]}.`, "danger");
+          addAway(`${c.name} fell to ${TIER_BADGE[c.tier]}.`);
+          addMemory(c, `Fell to ${TIER_BADGE[c.tier]} — Year ${State.time.year}.`);
+        }
+      }
+    }
+  }
+
+  // ---------------- SOCIAL — friendship & partnership formation ----------------
+  function tickSocial() {
+    const adults = State.citizens.filter((c) => c.state !== "DEAD" && c.age >= 18 && c.happiness > 40 && c.state !== "WORK");
+    if (adults.length < 2) return;
+    // Per tick, one adult (rotating by day) tries to interact with a nearby adult
+    const a = adults[State.time.totalDays % adults.length];
+    const candidates = adults.filter((b) => b !== a && Math.abs(b.row - a.row) + Math.abs(b.col - a.col) <= 2);
+    if (!candidates.length) return;
+    const b = candidates[Math.floor(Math.random() * candidates.length)];
+    // Track positive interaction
+    a.interactions[b.id] = (a.interactions[b.id] || 0) + 1;
+    b.interactions[a.id] = (b.interactions[a.id] || 0) + 1;
+    a.happiness = Math.min(100, a.happiness + 1);
+    b.happiness = Math.min(100, b.happiness + 1);
+    a.lastSocialDay = b.lastSocialDay = State.time.totalDays;
+    // Friendship after 3 interactions
+    if (a.interactions[b.id] === 3) {
+      if (!a.friendIds.includes(b.id)) a.friendIds.push(b.id);
+      if (!b.friendIds.includes(a.id)) b.friendIds.push(a.id);
+    }
+    // Partnership after 6+ interactions, both unattached, both 18+
+    if (a.interactions[b.id] >= 6 && !a.partnerId && !b.partnerId && a.id !== b.id) {
+      a.partnerId = b.id;
+      b.partnerId = a.id;
+      addMemory(a, `Married ${b.name} — Year ${State.time.year}.`);
+      addMemory(b, `Married ${a.name} — Year ${State.time.year}.`);
+      pushNotif(`${a.name} and ${b.name} were wed today.`, "good");
+      addAway(`${a.name} and ${b.name} were wed.`);
+    }
+  }
+
+  // ---------------- ROYALTY — King, Queen, Palace, Guards ----------------
+  function tickRoyalty() {
+    // Crown a King at Year 5 if none exists
+    const kingAlive = State.royalty.kingId && State.citizens.some((c) => c.id === State.royalty.kingId && c.state !== "DEAD");
+    if (!kingAlive && State.time.year >= 5 && State.citizens.length > 0) {
+      crownNewKing();
+    }
+    // If Queen died/left, find a partner of the King
+    if (State.royalty.kingId) {
+      const king = State.citizens.find((c) => c.id === State.royalty.kingId);
+      const queenAlive = State.royalty.queenId && State.citizens.some((c) => c.id === State.royalty.queenId && c.state !== "DEAD");
+      if (king && !queenAlive && king.partnerId) {
+        const q = State.citizens.find((c) => c.id === king.partnerId && c.state !== "DEAD" && c.gender === "F");
+        if (q) {
+          q.tier = 5; q.role = "Queen";
+          State.royalty.queenId = q.id;
+          addMemory(q, `Crowned Queen — Year ${State.time.year}.`);
+          pushNotif(`✨ ${q.name} has been crowned Queen.`, "divine");
+          addAway(`${q.name} was crowned Queen.`);
+        }
+      }
+    }
+  }
+  function crownNewKing() {
+    // Highest gold, prefer existing Noble (tier 3), else any adult male
+    let pool = State.citizens.filter((c) => c.state !== "DEAD" && c.age >= 18);
+    if (!pool.length) return;
+    const nobles = pool.filter((c) => c.tier === 3);
+    if (nobles.length) pool = nobles;
+    pool.sort((a, b) => b.gold - a.gold);
+    const king = pool[0];
+    king.tier = 4; king.role = "King"; king.gender = "M";
+    State.royalty.kingId = king.id;
+    State.royalty.founded = true;
+    addMemory(king, `Crowned King — Year ${State.time.year}.`);
+    pushNotif(`👑 ${king.name} has been crowned King of the realm.`, "divine");
+    addAway(`${king.name} was crowned King.`);
+    // Spawn the Royal Palace at the world centre if there isn't one
+    if (!State.royalty.palaceId) {
+      const cr = Math.floor(GRID_ROWS / 2), cc = Math.floor(GRID_COLS / 2);
+      let pr = cr, pc = cc;
+      // search outward for a free grass tile
+      for (let radius = 0; radius < 6 && State.buildings.some((b) => b.row === pr && b.col === pc); radius++) {
+        for (let dr = -radius; dr <= radius; dr++) for (let dc = -radius; dc <= radius; dc++) {
+          const r = cr + dr, c = cc + dc;
+          if (!inBounds(r, c)) continue;
+          if (State.tiles[r][c].type !== "grass") continue;
+          if (State.buildings.some((b) => b.row === r && b.col === c)) continue;
+          pr = r; pc = c; break;
+        }
+      }
+      const palace = { id: newId(), kind: "palace", row: pr, col: pc, level: 1, smokePhase: 0, sway: 0 };
+      State.buildings.push(palace);
+      State.royalty.palaceId = palace.id;
+      // Move king home to palace
+      king.home = { row: pr, col: pc, id: palace.id };
+      king.row = pr; king.col = pc; king.vrow = pr; king.vcol = pc;
+    }
+    // Spawn 4 Royal Guards as Tier 4 retinue
+    const palace = State.buildings.find((b) => b.id === State.royalty.palaceId);
+    for (let i = 0; i < 4; i++) {
+      const guard = spawnCitizen({ home: palace, role: "RoyalGuard", gender: i % 2 === 0 ? "M" : "F", age: 22 + Math.floor(Math.random() * 18) });
+      guard.tier = 4;
+      guard.followGroupId = king.id;
+      guard.formationSlot = i;
+      guard.health = 100;
+      addMemory(guard, `Sworn to the King — Year ${State.time.year}.`);
+    }
+  }
+  function tickRoyalGuards() {
+    if (!State.royalty.kingId) return;
+    const king = State.citizens.find((c) => c.id === State.royalty.kingId);
+    if (!king || king.state === "DEAD") return;
+    // 4 cardinal slots: N(-1,0) E(0,+1) S(+1,0) W(0,-1)
+    const slots = [[-1, 0], [0, 1], [1, 0], [0, -1]];
+    const guards = State.citizens.filter((c) => c.followGroupId === king.id && c.state !== "DEAD");
+    for (const g of guards) {
+      const slot = slots[g.formationSlot % 4];
+      const tr = Math.max(0, Math.min(GRID_ROWS - 1, king.row + slot[0]));
+      const tc = Math.max(0, Math.min(GRID_COLS - 1, king.col + slot[1]));
+      // Force the guard to step toward the slot every tick — overrides default work
+      if (g.row !== tr || g.col !== tc) {
+        g.row = tr; g.col = tc;
+        g.state = "WALK";
+      } else {
+        g.state = "IDLE";
+      }
+    }
+  }
+
+  // ---------------- LIVING EVENT ENGINE ----------------
+  function rollLivingEvent() {
+    const events = [
+      { weight: 3, fire: () => {
+        // A Merchant becomes the richest
+        const m = State.citizens.filter((c) => c.role === "Merchant" && c.state !== "DEAD").sort((a, b) => b.gold - a.gold)[0];
+        if (m) { pushNotif(`💰 ${m.name} is now the wealthiest merchant in the realm.`, "good"); addAway(`${m.name} became the realm's wealthiest merchant.`); }
+      }},
+      { weight: 2, fire: () => {
+        State.resources.food += 50; State.resources.gold += 20;
+        pushNotif("⚓ A trade caravan arrived. +50 Food, +20 Gold.", "good");
+        addAway("A trade caravan arrived (+50 Food, +20 Gold).");
+      }},
+      { weight: 2, fire: () => {
+        const c = State.citizens.filter((x) => x.tier <= 2 && x.state !== "DEAD")[0];
+        if (c) { pushNotif(`A whisper spreads: ${c.name} has been seen reading by candlelight.`, "good"); }
+      }},
+      { weight: 2, fire: () => {
+        State.resources.food = Math.max(0, State.resources.food - 30);
+        pushNotif("🌧 A poor harvest this season. -30 Food.", "danger");
+        addAway("A poor harvest cost 30 Food.");
+      }},
+      { weight: 1, fire: () => {
+        const noble = State.citizens.find((c) => c.tier === 3 && c.state !== "DEAD");
+        if (noble) { noble.gold += 30; pushNotif(`A Noble (${noble.name}) is hoarding gold. +30 to their purse.`, "danger"); addAway(`${noble.name} hoarded gold.`); }
+      }},
+      { weight: 1, fire: () => {
+        const k = State.royalty.kingId && State.citizens.find((c) => c.id === State.royalty.kingId);
+        if (k) {
+          const edicts = ["Tax Harvest", "Guild Charter", "Festival of Light", "Conscription"];
+          const e = edicts[Math.floor(Math.random() * edicts.length)];
+          State.royalty.edict = e; State.royalty.lastEdictDay = State.time.totalDays;
+          pushNotif(`📜 The King issued an edict: "${e}".`, "divine");
+          addAway(`King ${k.name} issued the edict "${e}".`);
+        }
+      }},
+      { weight: 1, fire: () => {
+        // Twins!
+        const mom = State.citizens.filter((c) => c.gender === "F" && c.age >= 18 && c.age < 45 && c.state !== "DEAD" && c.home)[0];
+        if (mom) {
+          const home = State.buildings.find((b) => b.id === mom.home.id);
+          if (home && State.citizens.length < 60) {
+            const t1 = spawnCitizen({ home, role: pickChildRole(), gender: "M", age: 0, parents: [mom] });
+            const t2 = spawnCitizen({ home, role: pickChildRole(), gender: "F", age: 0, parents: [mom] });
+            pushNotif(`✨ Twins were born to ${mom.name}: ${t1.name} and ${t2.name}.`, "good");
+            addAway(`Twins were born to ${mom.name}.`);
+          }
+        }
+      }},
+      { weight: 1, fire: () => {
+        // Pick an actual Royal Guard and remove them — otherwise the count snaps back next tick
+        const guards = State.citizens.filter((g) => g.role === "RoyalGuard" && g.state !== "DEAD");
+        if (guards.length) {
+          const deserter = guards[Math.floor(Math.random() * guards.length)];
+          deserter.role = "Farmer";
+          deserter.tier = 1;
+          deserter.followGroupId = null;
+          deserter.formationSlot = -1;
+          deserter.happiness = Math.max(0, deserter.happiness - 20);
+          addMemory(deserter, `Deserted the Royal Guard — Year ${State.time.year}.`);
+          pushNotif(`⚔ ${deserter.name} deserted the Royal Guard.`, "danger");
+          addAway(`${deserter.name} deserted the Royal Guard.`);
+        }
+      }},
+    ];
+    const total = events.reduce((s, e) => s + e.weight, 0);
+    let r = Math.random() * total;
+    for (const e of events) { if ((r -= e.weight) <= 0) { e.fire(); return; } }
+  }
+
+  // ---------------- "YOU WERE AWAY" RECAP ----------------
+  function addAway(text) {
+    if (!State.awayActive) return;
+    State.awayLog.push({ day: State.time.totalDays, year: State.time.year, text });
+    if (State.awayLog.length > 12) State.awayLog.shift();
+  }
+  function flushAwayRecap() {
+    if (!State.awayLog.length) return;
+    const modal = document.getElementById("away-modal");
+    const list = document.getElementById("away-list");
+    list.innerHTML = State.awayLog.map((e) => `<li>Year ${e.year} · ${e.text}</li>`).join("");
+    modal.classList.add("show");
+    State.awayLog = [];
   }
 
   function tickCitizen(c) {
@@ -490,10 +918,19 @@
     // Mood / happiness drift
     if (c.hunger < 30) c.happiness = Math.max(0, c.happiness - 1);
     if (c.health < 40) c.happiness = Math.max(0, c.happiness - 1);
-    if (c.happiness < 30) c.mood = "Despondent";
-    else if (c.happiness < 55) c.mood = "Restless";
-    else if (c.happiness < 80) c.mood = "Content";
-    else c.mood = "Joyful";
+    if (State.time.totalDays < c.griefUntilDay) c.mood = "Grieving";
+    else if (c.sickness > 40) c.mood = "Sick";
+    else if (c.hunger < 25) c.mood = "Hungry";
+    else if (c.happiness < 25) c.mood = "Angry";
+    else if (c.happiness < 50) c.mood = "Anxious";
+    else if (c.happiness > 80) c.mood = "Joyful";
+    else c.mood = "Content";
+
+    // Refresh thought every few in-game days, or whenever big state changes
+    if (State.time.totalDays - c.lastThoughtDay >= 3) {
+      c.thought = pickThought(c);
+      c.lastThoughtDay = State.time.totalDays;
+    }
 
     // Crime streak (low faith + low happiness)
     if (State.resources.faith < 10 && c.happiness < 30) c.crimeStreak++; else c.crimeStreak = Math.max(0, c.crimeStreak - 1);
@@ -711,9 +1148,14 @@
     if (!mother.home) return;
     const home = State.buildings.find((b) => b.id === mother.home.id);
     if (!home) return;
-    const baby = spawnCitizen({ home, role: pickChildRole(), gender: Math.random() < 0.5 ? "M" : "F", age: 0 });
+    // Father = mother's partner if any, else any male sharing the home, else random male
+    let father = mother.partnerId ? males.find((m) => m.id === mother.partnerId) : null;
+    if (!father) father = males.find((m) => m.home && m.home.id === mother.home.id);
+    if (!father) father = males[Math.floor(Math.random() * males.length)];
+    const parents = father ? [mother, father] : [mother];
+    const baby = spawnCitizen({ home, role: pickChildRole(), gender: Math.random() < 0.5 ? "M" : "F", age: 0, parents });
     baby.state = "IDLE";
-    pushNotif(`${baby.name} was born to ${mother.name}.`, "good");
+    pushNotif(`${baby.name} was born to ${mother.name}${father ? ` and ${father.name}` : ""}.`, "good");
     spawnSparkle(home.row, home.col);
   }
 
@@ -731,6 +1173,57 @@
     c.dissolveAt = performance.now();
     State.graves.push({ row: c.row, col: c.col, addedAt: State.time.totalDays });
     pushNotif(`${c.name} died of ${cause}, aged ${c.age}.`, "danger");
+    addAway(`${c.name} (${c.role}) died of ${cause}, aged ${c.age}.`);
+    // Grief on partner
+    if (c.partnerId) {
+      const partner = State.citizens.find((o) => o.id === c.partnerId && o.state !== "DEAD");
+      if (partner) {
+        partner.griefUntilDay = State.time.totalDays + 10;
+        partner.happiness = Math.max(0, partner.happiness - 30);
+        partner.mood = "Grieving";
+        partner.partnerId = null;
+        addMemory(partner, `Lost ${c.name} to ${cause} — Year ${State.time.year}.`);
+        pushNotif(`${partner.name} grieves the loss of ${c.name}.`, "danger");
+      }
+    }
+    // Inherit gold to children, split equally
+    if (c.childIds && c.childIds.length && c.gold > 0) {
+      const heirs = c.childIds.map((id) => State.citizens.find((o) => o.id === id && o.state !== "DEAD")).filter(Boolean);
+      if (heirs.length) {
+        const share = Math.floor(c.gold / heirs.length);
+        for (const h of heirs) {
+          h.gold += share;
+          addMemory(h, `Inherited ${share} gold from ${c.name}.`);
+        }
+      }
+    }
+    // Royal succession on King's death
+    if (c.id === State.royalty.kingId) {
+      State.royalty.kingId = null;
+      pushNotif(`👑 The King has died. The realm trembles.`, "danger");
+      addAway(`King ${c.name} died.`);
+      // Eldest child of the King → heir; else next call to tickRoyalty will crown a new noble
+      const heir = c.childIds.map((id) => State.citizens.find((o) => o.id === id && o.state !== "DEAD" && o.age >= 18)).filter(Boolean)[0];
+      if (heir) {
+        heir.tier = 4; heir.role = "King"; heir.gender = "M";
+        State.royalty.kingId = heir.id;
+        // re-bind royal guards
+        for (const g of State.citizens.filter((g) => g.followGroupId === c.id)) g.followGroupId = heir.id;
+        pushNotif(`👑 ${heir.name} ascends the throne. Long live the King.`, "divine");
+        addAway(`${heir.name} ascended the throne.`);
+        addMemory(heir, `Crowned King — Year ${State.time.year}.`);
+      } else {
+        // Instability
+        State.resources.faith = Math.max(0, State.resources.faith - 30);
+        for (const o of State.citizens) o.happiness = Math.max(0, o.happiness - 20);
+        pushNotif("⚠ No heir. The realm enters instability. -20 happiness, -30 faith.", "danger");
+      }
+    }
+    if (c.id === State.royalty.queenId) {
+      State.royalty.queenId = null;
+      pushNotif(`The Queen has died. Faith falters.`, "danger");
+      State.resources.faith = Math.max(0, State.resources.faith - 15);
+    }
     // dissolve particles
     for (let i = 0; i < 12; i++) {
       const iso = isoToScreen(c.col, c.row);
@@ -821,7 +1314,9 @@
         const houses = State.buildings.filter((b) => b.kind === "house");
         if (!houses.length) { pushNotif("No house to receive the child.", "danger"); State.resources.faith += cost; return false; }
         const home = houses[Math.floor(Math.random() * houses.length)];
-        const baby = spawnCitizen({ home, role: pickChildRole(), gender: Math.random() < 0.5 ? "M" : "F", age: 0 });
+        // If anyone lives here, treat them as parents
+        const residents = State.citizens.filter((c) => c.home && c.home.id === home.id && c.state !== "DEAD" && c.age >= 18);
+        const baby = spawnCitizen({ home, role: pickChildRole(), gender: Math.random() < 0.5 ? "M" : "F", age: 0, parents: residents.length ? residents.slice(0, 2) : undefined });
         spawnSparkle(home.row, home.col);
         pushNotif(`👶 ${baby.name} appears by miracle.`, "divine");
         return true;
@@ -1251,10 +1746,18 @@
     // Shadow
     ctx.fillStyle = "rgba(0,0,0,0.35)";
     ctx.beginPath(); ctx.ellipse(x, y, 10, 4, 0, 0, Math.PI * 2); ctx.fill();
-    // Body — role tunic
-    const bodyColor = c.age < 12 ? ROLE_COLORS.Child : (ROLE_COLORS[c.role] || "#7a8090");
+    // Body — tier-tinted tunic (tier overrides plain role color for nobility/royalty)
+    let bodyColor;
+    if (c.age < 12) bodyColor = ROLE_COLORS.Child;
+    else if (c.tier >= 3) bodyColor = TIER_TINTS[c.tier];
+    else bodyColor = (ROLE_COLORS[c.role] || TIER_TINTS[c.tier] || "#7a8090");
     if (c.state === "JAIL") ctx.fillStyle = "#3a3a44"; else ctx.fillStyle = bodyColor;
     ctx.fillRect(cx - 6, cy, 12, 16);
+    // Tier-3 nobles get a gold-trim collar
+    if (c.tier === 3) {
+      ctx.fillStyle = "#d4af6a";
+      ctx.fillRect(cx - 6, cy, 12, 2);
+    }
     // Head
     ctx.fillStyle = "#e8c89a";
     ctx.beginPath(); ctx.arc(cx, cy - 4, 5, 0, Math.PI * 2); ctx.fill();
@@ -1272,8 +1775,41 @@
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(cx, cy + 4, 14, 0, Math.PI * 2); ctx.stroke();
     }
-    // Elder crown — small gold cap on the village leader
-    if (c.isElder) {
+    // Crowns — King/Queen take precedence over Elder
+    if (c.tier === 4) {
+      // Tall gold king's crown
+      ctx.fillStyle = "#f5d27a";
+      ctx.beginPath();
+      ctx.moveTo(cx - 6, cy - 8);
+      ctx.lineTo(cx - 6, cy - 13);
+      ctx.lineTo(cx - 3, cy - 10);
+      ctx.lineTo(cx, cy - 14);
+      ctx.lineTo(cx + 3, cy - 10);
+      ctx.lineTo(cx + 6, cy - 13);
+      ctx.lineTo(cx + 6, cy - 8);
+      ctx.closePath();
+      ctx.fill();
+      // crown jewel
+      ctx.fillStyle = "#c25a4a";
+      ctx.fillRect(cx - 1, cy - 12, 2, 2);
+    } else if (c.tier === 5) {
+      // Slimmer silver queen's tiara
+      ctx.fillStyle = "#e6e6f0";
+      ctx.beginPath();
+      ctx.moveTo(cx - 5, cy - 9);
+      ctx.lineTo(cx - 2, cy - 12);
+      ctx.lineTo(cx + 2, cy - 12);
+      ctx.lineTo(cx + 5, cy - 9);
+      ctx.closePath();
+      ctx.fill();
+    } else if (c.role === "RoyalGuard") {
+      // Red-plumed helm
+      ctx.fillStyle = "#9a3a32";
+      ctx.fillRect(cx - 4, cy - 11, 8, 3);
+      ctx.fillStyle = "#c25a4a";
+      ctx.fillRect(cx - 1, cy - 14, 2, 4);
+    } else if (c.isElder) {
+      // Elder cap (small gold)
       ctx.fillStyle = "#d4af6a";
       ctx.beginPath();
       ctx.moveTo(cx - 5, cy - 8);
@@ -1283,6 +1819,13 @@
       ctx.lineTo(cx + 5, cy - 8);
       ctx.closePath();
       ctx.fill();
+    }
+    // Speech bubble when socializing this tick
+    if (State.time.totalDays - c.lastSocialDay < 1 && c.state !== "WORK" && c.state !== "JAIL") {
+      ctx.fillStyle = "rgba(255,255,255,0.78)";
+      ctx.beginPath(); ctx.arc(cx + 8, cy - 12, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#3a3028";
+      ctx.fillRect(cx + 6, cy - 12.5, 4, 1);
     }
     // State indicator
     if (c.state === "EAT") drawTinyIcon(cx + 9, cy - 6, "🍞");
@@ -1438,20 +1981,56 @@
       const cls = v < 25 ? "danger" : v < 50 ? "warn" : "";
       return `<div class="row"><span class="lbl">${label}</span><div style="display:flex;align-items:center;gap:8px;"><span class="val">${Math.floor(v)}</span><div class="bar"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div></div></div>`;
     };
+    const partner = c.partnerId ? State.citizens.find((o) => o.id === c.partnerId) : null;
+    const children = (c.childIds || []).map((id) => State.citizens.find((o) => o.id === id)).filter(Boolean);
+    const friends = (c.friendIds || []).map((id) => State.citizens.find((o) => o.id === id)).filter(Boolean);
+    const tierBadge = TIER_BADGE[c.tier] || "Labourer";
+    const titlePrefix = c.tier === 4 ? "King " : c.tier === 5 ? "Queen " : c.tier === 3 ? (c.gender === "F" ? "Lady " : "Lord ") : "";
+    const memHtml = c.memory.length
+      ? c.memory.slice().reverse().map((m) => `<li>Year ${m.year} · ${m.text}</li>`).join("")
+      : `<li class="dim">No notable memories yet.</li>`;
+    const linkPerson = (p) => `<span class="person-link" data-cid="${p.id}">${p.name}${p.state === "DEAD" ? " †" : ""}</span>`;
+    const followBtn = State.followId === c.id ? "Stop Following" : "Follow";
     ip.innerHTML = `
       <span class="close" data-close>×</span>
-      <h3>${c.name}${c.isElder ? " 👑" : ""}</h3>
-      <div class="sub">${c.isElder ? "Elder · " : ""}${c.gender === "F" ? "Lady" : "Lord"} · Age ${c.age} · ${c.role}</div>
+      <h3>${titlePrefix}${c.name}${c.isElder && c.tier < 3 ? " 👑" : ""}</h3>
+      <div class="sub">${tierBadge} · ${c.gender === "F" ? "Lady" : "Lord"} · Age ${c.age} · ${c.role}</div>
+      <div class="thought">"${c.thought || pickThought(c)}"</div>
+      <div class="badges">
+        <span class="badge tier-${c.tier}">${tierBadge}</span>
+        <span class="badge">${c.trait}</span>
+        <span class="badge mood-${c.mood.toLowerCase()}">${c.mood}</span>
+      </div>
       ${bar("Hunger", c.hunger)}
       ${bar("Health", c.health)}
       ${bar("Happiness", c.happiness)}
-      <div class="row"><span class="lbl">Mood</span><span class="val">${c.mood}</span></div>
       <div class="row"><span class="lbl">Gold</span><span class="val">${c.gold} 💰</span></div>
       <div class="row"><span class="lbl">State</span><span class="val">${c.state}</span></div>
       ${c.sickness > 0 ? bar("Sickness", c.sickness) : ""}
+      <div class="section-title">Relationships</div>
+      <div class="rels">
+        ${partner ? `<div><span class="lbl">Partner:</span> ${linkPerson(partner)}</div>` : `<div class="dim">No partner.</div>`}
+        ${children.length ? `<div><span class="lbl">Children:</span> ${children.map(linkPerson).join(", ")}</div>` : ""}
+        ${friends.length ? `<div><span class="lbl">Friends:</span> ${friends.map(linkPerson).join(", ")}</div>` : ""}
+      </div>
+      <div class="section-title">Memory</div>
+      <ul class="memory">${memHtml}</ul>
+      <button class="follow-btn" data-follow>${followBtn}</button>
     `;
     showInspect();
-    ip.querySelector("[data-close]").onclick = () => { State.selected = null; hideInspect(); };
+    ip.querySelector("[data-close]").onclick = () => { State.selected = null; State.followId = null; hideInspect(); };
+    ip.querySelector("[data-follow]").onclick = () => {
+      if (State.followId === c.id) State.followId = null;
+      else State.followId = c.id;
+      renderInspectCitizen(c);
+    };
+    ip.querySelectorAll(".person-link").forEach((el) => {
+      el.onclick = () => {
+        const id = parseInt(el.dataset.cid, 10);
+        const ref = State.citizens.find((o) => o.id === id);
+        if (ref) { State.selected = { kind: "citizen", ref }; renderInspectCitizen(ref); }
+      };
+    });
   }
 
   function renderInspectTile(t) {
@@ -1522,16 +2101,33 @@
     document.querySelectorAll(".tc-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         const cmd = btn.dataset.cmd;
+        const wasFastForward = State.time.scale > 1 || State.awayActive;
         if (cmd === "pause") State.time.paused = true;
         else if (cmd === "play") { State.time.paused = false; State.time.scale = 1; }
         else if (cmd === "x5") { State.time.paused = false; State.time.scale = 5; }
         else if (cmd === "x20") { State.time.paused = false; State.time.scale = 20; }
         else if (cmd === "sleep") {
-          // fast-forward to next season boundary
+          // fast-forward to next season boundary — count as away time
+          State.awayActive = true;
           const daysLeft = SEASON_DAYS - State.time.day + 1;
           for (let i = 0; i < daysLeft; i++) tickDay();
+          State.awayActive = false;
+          flushAwayRecap();
+          return;
         }
+        // Activate / deactivate away tracking
+        State.awayActive = State.time.scale > 1;
+        if (wasFastForward && cmd === "play") flushAwayRecap();
       });
+    });
+
+    // Kingdom Dashboard — toggle with K
+    document.getElementById("dashboard-close").addEventListener("click", () => {
+      document.getElementById("dashboard").classList.remove("show");
+      State.dashboardOpen = false;
+    });
+    document.getElementById("away-close").addEventListener("click", () => {
+      document.getElementById("away-modal").classList.remove("show");
     });
 
     document.querySelectorAll(".power-btn").forEach((btn) => {
@@ -1563,12 +2159,84 @@
     });
 
     window.addEventListener("keydown", (e) => {
+      const wasFastForward = State.time.scale > 1 || State.awayActive;
+      const setScale = (s) => {
+        State.time.paused = false;
+        State.time.scale = s;
+        State.awayActive = s > 1;
+        if (s === 1 && wasFastForward) flushAwayRecap();
+      };
       if (e.key === " ") { e.preventDefault(); State.time.paused = !State.time.paused; }
-      else if (e.key === "1") { State.time.paused = false; State.time.scale = 1; }
-      else if (e.key === "2") { State.time.paused = false; State.time.scale = 5; }
-      else if (e.key === "3") { State.time.paused = false; State.time.scale = 20; }
-      else if (e.key === "Escape") { State.activePower = null; canvas.classList.remove("targeting"); State.selected = null; hideInspect(); }
+      else if (e.key === "1") { setScale(1); }
+      else if (e.key === "2") { setScale(5); }
+      else if (e.key === "3") { setScale(20); }
+      else if (e.key === "Escape") {
+        State.activePower = null; canvas.classList.remove("targeting");
+        State.selected = null; State.followId = null;
+        hideInspect();
+        document.getElementById("dashboard").classList.remove("show");
+        document.getElementById("away-modal").classList.remove("show");
+        State.dashboardOpen = false;
+      }
+      else if (e.key === "k" || e.key === "K") {
+        State.dashboardOpen = !State.dashboardOpen;
+        const dash = document.getElementById("dashboard");
+        if (State.dashboardOpen) { renderDashboard(); dash.classList.add("show"); }
+        else dash.classList.remove("show");
+      }
     });
+  }
+
+  function renderDashboard() {
+    const root = document.getElementById("dashboard-body");
+    const tierCounts = [0, 0, 0, 0, 0, 0];
+    let totalGold = 0, totalHappy = 0, sickCount = 0, criminalCount = 0;
+    for (const c of State.citizens) {
+      if (c.state === "DEAD") continue;
+      tierCounts[c.tier] = (tierCounts[c.tier] || 0) + 1;
+      totalGold += c.gold;
+      totalHappy += c.happiness;
+      if (c.sickness > 40) sickCount++;
+      if (c.crimeStreak > 6) criminalCount++;
+    }
+    const living = State.citizens.filter((c) => c.state !== "DEAD").length;
+    const avgHappy = living ? Math.floor(totalHappy / living) : 0;
+    const king = State.royalty.kingId && State.citizens.find((c) => c.id === State.royalty.kingId);
+    const queen = State.royalty.queenId && State.citizens.find((c) => c.id === State.royalty.queenId);
+    const trafficLight = (n, warn, danger) => n >= danger ? "red" : n >= warn ? "amber" : "green";
+    root.innerHTML = `
+      <div class="dash-grid">
+        <div class="dash-card">
+          <div class="dash-label">Population</div>
+          <div class="dash-big">${living}</div>
+          <div class="dash-tiers">
+            ${[1,2,3,4,5].map((t) => `<div class="dash-tier"><span class="tier-dot tier-${t}"></span>${TIER_BADGE[t]}: <b>${tierCounts[t] || 0}</b></div>`).join("")}
+          </div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-label">Economy</div>
+          <div class="dash-row"><span>Treasury</span><b>${State.treasury} 💰</b></div>
+          <div class="dash-row"><span>Personal Gold (sum)</span><b>${totalGold} 💰</b></div>
+          <div class="dash-row"><span>Food</span><b>${Math.floor(State.resources.food)} 🌾</b></div>
+          <div class="dash-row"><span>Wood / Stone</span><b>${Math.floor(State.resources.wood)} / ${Math.floor(State.resources.stone)}</b></div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-label">Crown</div>
+          ${king ? `<div class="dash-row"><span>King</span><b>${king.name}, ${king.age}</b></div>` : `<div class="dash-row dim">No King has yet been crowned.</div>`}
+          ${queen ? `<div class="dash-row"><span>Queen</span><b>${queen.name}, ${queen.age}</b></div>` : ""}
+          <div class="dash-row"><span>Royal Guard</span><b>${State.army} ⚔</b></div>
+          ${State.royalty.edict ? `<div class="dash-row"><span>Active Edict</span><b>${State.royalty.edict}</b></div>` : ""}
+        </div>
+        <div class="dash-card">
+          <div class="dash-label">Wellbeing</div>
+          <div class="dash-row"><span>Average Happiness</span><b>${avgHappy}</b></div>
+          <div class="dash-row"><span>Faith</span><b>${Math.floor(State.resources.faith)} ✨</b></div>
+          <div class="dash-row"><span>Disease</span><span class="light light-${trafficLight(sickCount, 1, 3)}"></span> <b>${sickCount}</b></div>
+          <div class="dash-row"><span>Crime</span><span class="light light-${trafficLight(criminalCount, 1, 3)}"></span> <b>${criminalCount}</b></div>
+          <div class="dash-row"><span>Revolt risk</span><span class="light light-${avgHappy < 15 ? "red" : avgHappy < 35 ? "amber" : "green"}"></span></div>
+        </div>
+      </div>
+    `;
   }
 
   function handleWorldClick(wx, wy /*, screenX, screenY */) {
@@ -1619,9 +2287,24 @@
       }
     }
 
+    // Follow camera — gently track the followed citizen
+    if (State.followId) {
+      const tgt = State.citizens.find((c) => c.id === State.followId && c.state !== "DEAD");
+      if (tgt) {
+        const iso = isoToScreen(tgt.vcol, tgt.vrow);
+        const desiredX = window.innerWidth / 2 - iso.x * State.camera.zoom;
+        const desiredY = window.innerHeight / 2 - iso.y * State.camera.zoom;
+        State.camera.x += (desiredX - State.camera.x) * 0.08;
+        State.camera.y += (desiredY - State.camera.y) * 0.08;
+      } else {
+        State.followId = null;
+      }
+    }
+
     tickParticles(dt);
     render();
     updateHUD();
+    if (State.dashboardOpen) renderDashboard();
 
     requestAnimationFrame(loop);
   }

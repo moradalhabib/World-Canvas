@@ -1,0 +1,76 @@
+PHASE 2 — THE NPC SIMULATION ENGINE (THE LIVING SOUL)
+Citizens are not controlled by the player. They are independent agents with inner lives, social relationships, daily routines, ambitions, and emotions. The world must feel populated by real people, not game pieces.
+TIER SYSTEM:
+Every citizen belongs to one of five tiers. Tier determines their home quality, daily behaviour, speech style, clothing sprite tint, and economic role.
+
+Tier 1 — Labourer: Farmer, Woodcutter, Miner, Builder. Manual workers. Produce all base resources. Vulnerable to hunger, disease, and poverty. Can socially climb to Tier 2 if personal Gold exceeds 200 and they are housed.
+Tier 2 — Middle Class: Merchant, Craftsman, Priest. Process and trade resources. Employ up to 2 Labourers (they gain a % of those workers' output). Can fall to Tier 1 if Gold drops below 20.
+Tier 3 — Noble: Land-owning elite. Do not work manually. Collect passive Gold each season from tiles within a 3-cell radius. Host seasonal feasts that boost all nearby citizens' Happiness +20. Can be appointed by God or emerge naturally when a Merchant accumulates Gold > 500.
+Tier 4 — Royalty: One King, one Queen per world. King spawns naturally at Year 5 from the highest-ranked Noble, or can be appointed by God power earlier. Queen is the King's partner. King issues one Edict per Season (e.g. "Tax Harvest — all Farmers yield +20% Food but lose 10 Gold"). Queen manages the Faith pool — her Happiness directly multiplies global Faith generation by 0.5x to 1.5x. If the King dies with no Noble heir, an Instability Event fires and Happiness drops world-wide.
+
+INDIVIDUAL NPC ANATOMY:
+Each citizen has the following persistent state:
+
+Name (procedurally generated, culturally consistent)
+Age, Gender, Tier, Role
+Hunger (0–100), Health (0–100), Happiness (0–100), Energy (0–100)
+Gold (personal balance), Home tile ref, Workplace tile ref
+Lifespan (randomised 45–85 in-game years, modified by Health)
+Personality Trait (one of: Hardworking / Lazy / Greedy / Generous / Fearful / Brave / Devout / Cynical) — this trait modifies their behaviour weights permanently
+Current Thought — a short string displayed in their inspector card, updated each tick based on their state (e.g. "I haven't eaten in two days." / "The harvest looks good this season." / "I worry about the King's new edict.")
+Mood — derived from Hunger + Health + Happiness + recent events. Moods: Content / Anxious / Hungry / Grieving / Joyful / Angry / Sick
+Memory Log — last 5 significant events stored (e.g. "My father died. Year 3." / "I was promoted to Merchant. Year 4.")
+Relationships — each NPC holds references to: Partner (if any), Children (array), Parents (if alive), 1–3 Friends (NPCs they've interacted with positively)
+
+DAILY ROUTINE (Runs Every Tick):
+Each citizen follows a priority-weighted behaviour tree:
+
+Survival first: If Hunger < 25 → drop everything, pathfind to nearest food, eat, deduct global Food. Update Thought: "I need to eat."
+Health: If Health < 20 → rest at home, recover +2 Health/tick. Thought: "I need to rest."
+Energy: If Energy < 15 → sleep at home, recover Energy. NPCs sleep during Night ticks (if day/night cycle enabled).
+Work: Pathfind to workplace. Perform role action. Yield resources to global pool. Earn personal Gold proportional to output.
+Social: If Happiness < 50 and Energy > 60 → seek a nearby friend or partner, spend time together, both gain +5 Happiness. Thought becomes warm or conversational.
+Leisure: If all needs met and Happiness > 70 → wander, explore, or gather near communal spaces (church, market). Devout trait → visits church for +Faith. Greedy trait → checks market prices.
+Ambition: If Gold threshold for next tier is within 20% → Hardworking trait NPCs work an extra action per tick. Lazy trait NPCs do not.
+
+SOCIAL MOBILITY:
+
+Tier promotion is checked once per Season. Requirements met → citizen upgrades tier, home tile upgrades visually, sprite tint shifts to reflect new tier.
+Tier demotion fires immediately when Gold drops below floor threshold.
+Nobles can intermarry — producing a Noble-tier child if both parents are Tier 3+.
+A Labourer child of a Noble is born Tier 2 (inherited status softener).
+
+RELATIONSHIPS & REPRODUCTION:
+
+Two adult citizens (18+ years) of opposite or same gender, same or adjacent tier, who have interacted positively 3+ times → become Partners.
+Partners who are both housed, fed, and Happiness > 60 → produce a child after a 9-tick delay. Child starts at parent's tier or one below.
+Children are dependents for 18 in-game years. They appear small on screen, follow their parent's home tile, and have no role. On reaching adulthood, they are assigned a role based on current world resource needs.
+NPCs grieve when a partner or child dies — Happiness drops -30, Mood becomes Grieving for 10 ticks. Thought: "I lost someone I loved."
+
+THOUGHTS & INNER LIFE:
+Every NPC has a Current Thought string, visible in their inspector card. Update this dynamically based on state:
+
+Hungry → "My stomach is empty. I hope someone farms soon."
+Sick → "My body aches. I can barely lift the axe."
+Grieving → "The world feels quieter without them."
+Happy, high Gold → "Life is good. Perhaps I can build something greater."
+After a God Bless event → "I felt something divine just now. A warmth I can't explain."
+After a Strike near them → "The sky cracked open. Whatever lives up there is watching."
+Noble, political → "The King's edict this season is foolish. We nobles suffer for it."
+King → "The weight of a kingdom never truly lifts."
+
+Generate at least 40 context-specific thought strings and rotate based on NPC state + recent memory.
+GENERATIONAL SUCCESSION:
+
+On death → a grave marker appears at their home tile. A death notice fires in the toast feed with their name and age.
+If they had a Partner → Partner enters Grief state.
+If they had children → children inherit the home tile and their parent's Gold (split equally).
+If the King dies → Succession Event: highest-tier Noble becomes King. If no Noble exists → Instability fires: Happiness -20 world-wide, Faith -30. God can intervene to appoint a new King directly.
+Graves decay after 3 in-game years and the tile returns to Grass.
+
+POPULATION FAILURE STATES:
+
+Food = 0 → Starvation tick begins. One citizen dies per tick until food is restored.
+Faith = 0 → Crime events fire randomly. NPCs steal Gold from each other. Happiness spirals.
+Happiness world average < 15 → Revolt Warning toast. If sustained 5 ticks → citizens stop working entirely.
+All citizens dead → EXTINCTION EVENT. Full-screen cinematic overlay fades in. Silence. Then God is offered the power to restart the world with a founding blessing.

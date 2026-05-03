@@ -1,0 +1,160 @@
+Yes. I get it exactly. You want to open the game after an hour and feel like you missed something. Like the world didn't wait for you. Things happened, buildings went up, the King made a decision, a merchant got rich, a soldier died — all without you. That feeling is everything.
+Here's the complete expansion. This becomes Phase 7 and Phase 8 added to the master prompt:
+
+PHASE 7 — THE LIVING CIVILISATION (INSTITUTIONS, MILITARY & INFRASTRUCTURE)
+The world must feel like a real functioning society with institutions that operate independently. Buildings are not decorations — they are active systems with staff, outputs, and upgrade paths.
+THE ROYAL PALACE & FAMILY:
+The Palace is the grandest structure on the map. It spawns at world centre when a King is crowned. It upgrades visually as the Royal Treasury grows.
+The Royal Family consists of:
+
+The King — always accompanied by 4 Royal Guards who follow him as a unit wherever he moves. Guards are Tier 4 soldiers with high Health and combat stats. If the King moves, they move. If the King holds court (idles at Palace), they stand at the four cardinal points around him as a visible formation.
+The Queen — accompanied by 2 Ladies-in-Waiting and 1 personal Guard. Manages Faith economy from the Palace chapel wing. Her mood directly scales global Faith output.
+Prince & Princess — children of the King and Queen. Born like regular NPC children but flagged as Royalty. They have tutors assigned automatically from the Priest class. They do not work. They attend ceremonies, walk the grounds, and appear in toast events ("Prince Aldric turned 12 today."). On the King's death, the eldest Prince becomes King. If no Prince exists, the eldest Noble is crowned and the Princess may be offered as a diplomatic match to another Noble (God can approve or block this).
+Royal Succession Events fire with full cinematic overlays — coronation, royal birth, royal death — these are the biggest moments in the game.
+
+BUILDING TIERS & UPGRADES:
+Every building starts at Level 1 and upgrades automatically when the civilisation's wealth and resources cross thresholds. Upgrades are visible — the sprite changes, the building grows, particles fire on upgrade.
+BuildingL1L2L3HouseWooden HutStone CottageNoble ManorFarmDirt patchFenced FarmIrrigated EstateChurchWooden ChapelStone ChurchGrand CathedralMarketMarket StallCovered MarketGrand BazaarBarracksWooden BarracksStone FortRoyal CitadelHospitalHealer's HutClinicRoyal HospitalBankMoney LenderBankRoyal Treasury WingDockFishing PierTrading DockGrand Port
+Upgrade triggers: when global Gold, Wood, and Stone collectively exceed a threshold, the relevant building auto-upgrades. A toast fires: "The Church has been expanded into a Grand Cathedral."
+INSTITUTIONAL BUILDINGS — each is a live system:
+🏦 Bank / Royal Treasury:
+
+Staffed by 1–3 Merchant-class NPCs.
+Stores national Gold reserve separate from personal NPC wallets.
+Citizens can deposit Gold (auto if Gold > 150). Earns 2% interest per Season.
+Treasury funds the King's army wages. If Treasury hits 0 → soldiers desert one per tick. Toast: "A soldier has abandoned his post. The treasury is empty."
+God can tax the population (transfer % of all personal Gold to Treasury) or issue a Royal Bounty (distribute Treasury Gold to citizens).
+
+⚓ Docks:
+
+Built only on Water-adjacent tiles.
+Spawns 1 Trade Ship NPC per Season. Ship departs, returns after 5 ticks with +Gold and +rare resources.
+If Dock is at Level 3 (Grand Port), 3 ships operate simultaneously.
+Ships can be lost at sea — 10% chance per journey. Toast: "The merchant vessel Aurelia has not returned. Feared lost."
+Dock generates passive Gold income even when no ship is active (fishing).
+
+🏥 Hospital:
+
+Staffed by 1 Healer (Priest-class NPC repurposed).
+Sick citizens pathfind here automatically when Health < 30.
+Heals +5 Health per tick while inside. Faster than resting at home.
+At Level 3 (Royal Hospital) → can cure disease events completely.
+If no Hospital exists and a Disease Event fires → it spreads to adjacent NPCs each tick until 40% of population is sick.
+
+👮 Police Station / Barracks:
+
+Police Station staffed by 2–4 Guard-class NPCs.
+When Faith = 0 and crime fires → Guards pathfind to the criminal NPC and reduce crime. If no Police Station → crime spreads unchecked.
+Barracks trains soldiers. Requires Gold from Treasury to operate. Produces 1 new soldier every 3 Seasons if funded.
+King's Army size is visible in the HUD (sword icon + number). Army defends against Plague, Revolt, and future expansion events.
+
+🏛️ Ministries:
+Five ministries operate as passive buff buildings, each staffed by one Noble-class NPC:
+
+Ministry of Agriculture → +15% Farm yield globally.
+Ministry of Trade → +10% Gold from all Merchant activity.
+Ministry of Faith → +20% Faith generation from Church.
+Ministry of Health → All citizens gain +1 Health per 5 ticks passively.
+Ministry of Justice → Crime chance halved. Guard NPCs respond 2x faster.
+
+Ministries must be built manually by God (cost: 200 Gold + 50 Stone from Treasury). Each needs a Noble assigned as Minister — God selects from available Nobles via a dropdown in the inspect panel.
+⛪ Church / Grand Cathedral:
+
+Priests conduct daily sermons. Each sermon attended by nearby citizens adds +Faith and +Happiness.
+Citizens with Devout trait attend every day automatically.
+Grand Cathedral at Level 3 → hosts seasonal festivals that give ALL citizens +25 Happiness for 3 ticks. Toast: "The Harvest Festival has begun. The people rejoice."
+
+🏪 Market / Grand Bazaar:
+
+Merchants set up stalls. Citizens visit to spend personal Gold in exchange for Happiness boosts.
+At Grand Bazaar level → inter-tier trading happens automatically. Nobles buy luxury goods from Merchants. Merchants buy raw resources from Labourers. Gold circulates the economy.
+God can crash the market (disaster event) or subsidise it (Faith cost).
+
+
+PHASE 8 — THE WORLD FEELS ALIVE (THE "CHECK-IN" SYSTEM)
+This phase is specifically designed so that every time the player returns to the game — even after 5 minutes away — something meaningful has happened. The world does not wait.
+The Living Event Engine:
+Every 10 ticks, the engine rolls for a random world event from the following categories:
+Economic Events:
+
+A Merchant became the richest citizen in the kingdom.
+A trade ship returned with exotic goods. +50 Gold, +20 Happiness.
+Crop failure this Season. Food output halved for 5 ticks.
+A Noble is hoarding Gold and refusing to pay taxes.
+
+Social Events:
+
+A wedding between two citizens. Happiness boost in radius.
+Twins born to a Labourer family.
+A Labourer rose to Middle Class through hard work. "From nothing."
+A Noble was caught stealing from the Treasury. God can punish or pardon.
+
+Political Events:
+
+The King issued a new Edict. Seasonal buff/nerf takes effect.
+A Noble is challenging the King's authority. Instability rises.
+A Minister resigned. Ministry buff removed until replaced.
+The Prince came of age. He requests a knighthood.
+
+Crisis Events:
+
+Disease outbreak. Spreads from one NPC outward each tick.
+Fire on a building tile. Spreads if no Guards respond. God can Bless-rain to extinguish.
+Famine warning. Food reserves projected to hit zero in 8 ticks.
+A soldier deserted. Army strength -1.
+
+Divine Events (triggered by God actions):
+
+After a Bless → citizens speak of a warm presence. Faith spikes.
+After a Strike → citizens fear God. Happiness -5, Faith +20.
+After a Miracle Birth → the child is considered blessed. Born with +20 to all stats.
+
+The "You Were Away" Log:
+When the player returns after fast-forwarding or being idle, a summary panel slides in showing everything that happened:
+
+"While you were away — 3 days passed."
+"• Elara (Farmer) died of old age, aged 71."
+"• The Market upgraded to Grand Bazaar."
+"• A trade ship returned with 80 Gold."
+"• Prince Aldric turned 18. He is ready for a role."
+"• Faith dropped to 12. Crime is rising."
+
+This panel is dismissible with one click. It's the first thing the player sees when they come back.
+Ambient World Sounds (Visual Equivalents — since no audio):
+Since this is canvas-based, compensate for no audio with micro-animations that communicate life:
+
+Citizens visibly chat when socialising (small speech bubble with "..." above their heads for 2 ticks).
+Guards visibly patrol routes around the Palace in formation.
+The King sits on a visible throne sprite inside the Palace when idle — you can see him through an open-gate tile.
+Trade ships visibly sail across water tiles toward the dock and back.
+At night ticks — windows on houses glow with a warm amber light particle.
+Seasonal festivals show visible crowd formations near the Cathedral.
+When a building upgrades — scaffolding sprite appears for 3 ticks, then the new building sprite reveals.
+
+The Inspector Panel (Deep Citizen Profile):
+Clicking any citizen opens a rich side panel showing:
+
+Portrait (tier-appropriate illustrated avatar, tint-coded by tier)
+Full name, age, tier badge, role icon
+Hunger / Health / Happiness / Energy bars (colour coded)
+Personal Gold balance
+Current Thought (italic, human)
+Mood badge (Content / Anxious / Grieving / Joyful / Angry / Sick)
+Memory Log — last 5 life events listed chronologically
+Relationships — Partner name (clickable), children names (clickable), friends listed
+A "Follow" button — camera locks onto this NPC and follows their daily life in real time
+
+The Kingdom Dashboard (God's Overview):
+Pressing [K] opens a full overlay showing:
+
+Population count by tier (bar chart)
+Economy graph — Gold over last 10 Seasons
+Happiness average trend line
+Current army size
+Treasury balance
+Active diseases / crime level / revolt risk (traffic light indicators)
+Current King's Edicts in effect
+Next succession prediction ("At current rate, Prince Aldric becomes King in ~Year 9")
+
+
+That is the complete system. The world now has blood running through it. The player opens the game and immediately has something to read, something to react to, and somewhere to look. They will want to follow individual citizens, watch the King hold court, track a Labourer climbing to Noble, and feel responsible when something goes wrong. That's the game.
