@@ -3724,32 +3724,22 @@ export class GameEngine {
         g.lineTo(0, ts / 4);    // bottom
         g.lineTo(-ts / 2, 0);   // left
         g.closePath();
-        // Phase 7 (Hi-Fi sprite drop, revision 2) — uniform asphalt.png
-        // ground for every tile in the grid. All procedural color fills,
-        // biome patterns, terrain clutter, mountain cliffs, and cliff
-        // extrusions have been intentionally stripped per the user's
-        // "strictly rely on the new PNGs" directive. Until the asphalt
-        // sprite finishes loading, fall back to a neutral mid-gray so
-        // the world is uniform on first paint instead of flashing the
-        // old palette. The asset-ready watcher in the main loop flags
-        // a single rebake the moment the sprite arrives, after which
-        // every tile renders the asphalt diamond.
-        if (this.spriteAssets.has(this.state.currentEra, "environment.ground")) {
-          this.spriteAssets.tryDraw(
-            g,
-            this.state.currentEra,
-            "environment.ground",
-            -ts / 2,
-            -ts / 4,
-            ts,
-          );
+        // Phase 7 (Hi-Fi sprite drop, revision 3) — strict object-stamp
+        // rendering per the user spec: draw the asphalt.png ONCE per
+        // cell, scaled to TILE_WIDTH (ts), centered precisely on the
+        // cell's iso coordinates. Native 1:1 aspect (the source is
+        // 256×256) is preserved → ts×ts square centered on (sx, sy).
+        // No pattern fill, no stroke, no clipping. While the PNG
+        // streams in, render a neutral mid-gray so the world is
+        // uniform on first paint.
+        const groundImg = this.spriteAssets.get(this.state.currentEra, "environment.ground");
+        if (groundImg) {
+          g.drawImage(groundImg, -ts / 2, -ts / 2, ts, ts);
         } else {
           g.fillStyle = "#8a8a8a";
           g.fill();
         }
-        // Reference `tile` so the unused-binding lint doesn't fire after
-        // we removed every consumer of the per-tile biome data.
-        void tile;
+        void tile; // intentional — biome data unused under hi-fi mode
 
         g.restore();
       }
@@ -4447,21 +4437,22 @@ export class GameEngine {
       const def = getBuildingDef(b.typeId);
       const isLegacyCombined =
         b.status === "rubble" || (def.category === "service" && b.typeId === "well");
-      // Phase 7 (Hi-Fi sprite drop, revision 2) — Level-1 free houses
-      // render as a single house_4.png sprite, completely bypassing the
-      // dollhouse three-layer split. Y-sort still works because the
-      // single entry uses the same `row + col` sortKey baseline.
-      const isHiFiSprite =
-        b.typeId === "house_free" &&
-        b.status !== "rubble" &&
-        this.spriteAssets.has(this.state.currentEra, "building.house_free");
-      if (isHiFiSprite) {
-        const era = this.state.currentEra;
-        const x = sx - ts * 0.5;
-        const y = sy - ts * 0.5;
+      // Phase 7 (Hi-Fi sprite drop, revision 3) — Level-1 free houses
+      // render as ONE house_4.png stamp, preserving the source aspect
+      // ratio, anchored bottom-center at the iso cell's center (sx, sy).
+      // Width = TILE_WIDTH; height = ts * (img.height / img.width).
+      const houseImg =
+        b.typeId === "house_free" && b.status !== "rubble"
+          ? this.spriteAssets.get(this.state.currentEra, "building.house_free")
+          : null;
+      if (houseImg) {
+        const w = ts;
+        const h = ts * (houseImg.naturalHeight / houseImg.naturalWidth);
+        const dx = sx - w / 2;
+        const dy = sy - h;
         queue.push({
           sortKey: b.row + b.col,
-          draw: () => this.spriteAssets.tryDraw(ctx, era, "building.house_free", x, y, ts),
+          draw: () => ctx.drawImage(houseImg, dx, dy, w, h),
         });
       } else if (isLegacyCombined) {
         // Wells / rubble — single combined draw (no roof to fade).
@@ -4503,32 +4494,25 @@ export class GameEngine {
       });
     }
 
-    // Phase 7 — Hi-Fi tree sprites on forest tiles. Trees MUST be in
-    // the entity sort queue (not baked into terrainLayer) so they
-    // correctly Y-sort against buildings + citizens: a tree on a tile
-    // "in front" of a house occludes the house's facade, exactly as
-    // the user's hi-fi spec requires. Only emits queue entries when
-    // the tree sprite is actually loaded — otherwise the procedural
-    // forest clutter inside the bake remains the visual.
-    if (this.spriteAssets.has(this.state.currentEra, "environment.tree")) {
-      const era = this.state.currentEra;
-      // Cull to camera viewport in tile space — converting screen
-      // bounds back to (row, col) is overkill, so we just iterate the
-      // grid and reject by iso projection like every other queue pass.
+    // Phase 7 (Hi-Fi sprite drop, revision 3) — ONE tree_3.png stamp
+    // per forest cell, native aspect preserved, anchored bottom-center
+    // at the cell's iso center (sx, sy). Width = TILE_WIDTH; height =
+    // ts * (img.height / img.width). No pattern fill, no stroke. In
+    // the entity sort queue so trees Y-sort against citizens/houses.
+    const treeImg = this.spriteAssets.get(this.state.currentEra, "environment.tree");
+    if (treeImg) {
+      const treeW = ts;
+      const treeH = ts * (treeImg.naturalHeight / treeImg.naturalWidth);
       for (let r = 0; r < grid.rows; r++) {
         for (let c = 0; c < grid.cols; c++) {
           if (grid.tiles[r][c].type !== "forest") continue;
           const { sx, sy } = worldToIso(c, r, ts, rows);
           if (sx < minSx || sx > maxSx || sy < minSy || sy > maxSy) continue;
-          const x = sx - ts * 0.5;
-          const y = sy - ts * 0.5;
-          // sortKey = row + col with no epsilon → trees draw at exactly
-          // the same depth as a building on the same tile (which never
-          // happens — buildings replace forests on placement) and
-          // BEHIND a citizen on the same tile (citizen sortKey +0.01).
+          const dx = sx - treeW / 2;
+          const dy = sy - treeH;
           queue.push({
             sortKey: r + c,
-            draw: () => this.spriteAssets.tryDraw(ctx, era, "environment.tree", x, y, ts),
+            draw: () => ctx.drawImage(treeImg, dx, dy, treeW, treeH),
           });
         }
       }
