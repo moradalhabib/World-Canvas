@@ -3724,20 +3724,18 @@ export class GameEngine {
         g.lineTo(0, ts / 4);    // bottom
         g.lineTo(-ts / 2, 0);   // left
         g.closePath();
-        // Phase 7 (Hi-Fi sprite drop, revision 3) — strict object-stamp
-        // rendering per the user spec: draw the asphalt.png ONCE per
-        // cell, scaled to TILE_WIDTH (ts), centered precisely on the
-        // cell's iso coordinates. Native 1:1 aspect (the source is
-        // 256×256) is preserved → ts×ts square centered on (sx, sy).
-        // No pattern fill, no stroke, no clipping. While the PNG
-        // streams in, render a neutral mid-gray so the world is
-        // uniform on first paint.
+        // Phase 7 (Hi-Fi sprite drop, revision 4) — strict iso ground
+        // stamp per the user spec. TILE_HEIGHT = TILE_WIDTH / 2 so the
+        // diamond bounding box is ts × ts/2, centered on (sx, sy).
+        // After the per-tile g.translate(sx, sy), local origin IS the
+        // tile center, so the draw call is:
+        //   ctx.drawImage(img, -ts/2, -ts/4, ts, ts/2)
+        // No background fill, no stroke, no clipping. The asset-ready
+        // watcher rebakes within 1s of the PNG arriving, so any first
+        // paint before the sprite loads is transparent (intentionally).
         const groundImg = this.spriteAssets.get(this.state.currentEra, "environment.ground");
         if (groundImg) {
-          g.drawImage(groundImg, -ts / 2, -ts / 2, ts, ts);
-        } else {
-          g.fillStyle = "#8a8a8a";
-          g.fill();
+          g.drawImage(groundImg, -ts / 2, -ts / 4, ts, ts / 2);
         }
         void tile; // intentional — biome data unused under hi-fi mode
 
