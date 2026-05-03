@@ -3724,30 +3724,17 @@ export class GameEngine {
         g.lineTo(0, ts / 4);    // bottom
         g.lineTo(-ts / 2, 0);   // left
         g.closePath();
-        const pat = this.biomePatterns.get(tile.type);
-        // Phase 16: Use the live (season-aware) tile color as the fallback
-        // so a missing pattern still respects spring greens / winter snow.
-        g.fillStyle = pat || this.liveTileColors[tile.type];
-        g.fill();
-        // Subtle dark edge to give every tile a visible boundary, like
-        // the etched lines you see in classic dimetric strategy games.
-        g.strokeStyle = "rgba(0, 0, 0, 0.18)";
-        g.lineWidth = 0.75;
-        g.stroke();
-
-        // Phase 7 — Hi-Fi ground sprite. Blit the asphalt diamond on top
-        // of the procedural color fill for "land" biomes (grass / desert
-        // / snow). The sprite already covers the diamond bounds exactly,
-        // so it visually replaces the color while leaving the dark edge
-        // stroke as a tile boundary hint. Forest stays procedural so the
-        // tree-Y-sort overlay reads against a green ground; water /
-        // mountain / crater have their own distinctive textures.
-        if (
-          (tile.type === "grass" || tile.type === "desert" || tile.type === "snow") &&
-          this.spriteAssets.has(this.state.currentEra, "environment.ground")
-        ) {
-          // tryDraw uses top-left anchor for environment.ground; the
-          // tile diamond's bounding box origin is (-ts/2, -ts/4).
+        // Phase 7 (Hi-Fi sprite drop, revision 2) — uniform asphalt.png
+        // ground for every tile in the grid. All procedural color fills,
+        // biome patterns, terrain clutter, mountain cliffs, and cliff
+        // extrusions have been intentionally stripped per the user's
+        // "strictly rely on the new PNGs" directive. Until the asphalt
+        // sprite finishes loading, fall back to a neutral mid-gray so
+        // the world is uniform on first paint instead of flashing the
+        // old palette. The asset-ready watcher in the main loop flags
+        // a single rebake the moment the sprite arrives, after which
+        // every tile renders the asphalt diamond.
+        if (this.spriteAssets.has(this.state.currentEra, "environment.ground")) {
           this.spriteAssets.tryDraw(
             g,
             this.state.currentEra,
@@ -3756,43 +3743,15 @@ export class GameEngine {
             -ts / 4,
             ts,
           );
+        } else {
+          g.fillStyle = "#8a8a8a";
+          g.fill();
         }
-
-        // Phase 15: Procedural clutter pass — pebbles, wildflowers, and
-        // grass tufts scattered onto grass / forest / desert / snow tiles
-        // with a deterministic per-tile RNG so two adjacent screens never
-        // look identical, but the same tile renders the same scatter on
-        // every reload. Drawn ONCE into the cached terrainLayer, so the
-        // per-frame cost is exactly zero. Skipped entirely for water /
-        // mountain / crater (those biomes get their own visual texture).
-        if (tile.type === "grass" || tile.type === "forest" || tile.type === "desert" || tile.type === "snow") {
-          this.drawTerrainClutter(g, ts, tile.type, r, c);
-        }
-        // Phase 16: Mountain cliff face — gray rocky ridge on the south
-        // edge of mountain tiles, giving the world genuine verticality
-        // when zoomed in. Baked into terrainLayer (zero per-frame cost).
-        if (tile.type === "mountain") {
-          this.drawMountainCliff(g, ts, r, c);
-        }
-        // Phase 17: Water foam moved to per-frame `drawAnimatedFoam` so
-        // the shore can pulse with the same waterAnimPhase as the wave
-        // overlay (3-frame loop). Baking it here would freeze the foam
-        // out of phase with the moving water.
+        // Reference `tile` so the unused-binding lint doesn't fire after
+        // we removed every consumer of the per-tile biome data.
+        void tile;
 
         g.restore();
-      }
-    }
-
-    // Phase 17: True 3D extruded cliff faces — second pass after every
-    // tile has been filled, so the cliff prism (which extends DOWN past
-    // the diamond's south vertex) draws OVER any non-mountain tile
-    // immediately below it, exactly like a real cliff dropping into the
-    // valley floor. Drawn in iso-projection world space (no per-tile
-    // translate) so the extrusion lines up with neighbor tile tops.
-    for (let r = 0; r < grid.rows; r++) {
-      for (let c = 0; c < grid.cols; c++) {
-        if (grid.tiles[r][c].type !== "mountain") continue;
-        this.drawCliffExtrusion(g, ts, grid, r, c);
       }
     }
 
@@ -4488,7 +4447,23 @@ export class GameEngine {
       const def = getBuildingDef(b.typeId);
       const isLegacyCombined =
         b.status === "rubble" || (def.category === "service" && b.typeId === "well");
-      if (isLegacyCombined) {
+      // Phase 7 (Hi-Fi sprite drop, revision 2) — Level-1 free houses
+      // render as a single house_4.png sprite, completely bypassing the
+      // dollhouse three-layer split. Y-sort still works because the
+      // single entry uses the same `row + col` sortKey baseline.
+      const isHiFiSprite =
+        b.typeId === "house_free" &&
+        b.status !== "rubble" &&
+        this.spriteAssets.has(this.state.currentEra, "building.house_free");
+      if (isHiFiSprite) {
+        const era = this.state.currentEra;
+        const x = sx - ts * 0.5;
+        const y = sy - ts * 0.5;
+        queue.push({
+          sortKey: b.row + b.col,
+          draw: () => this.spriteAssets.tryDraw(ctx, era, "building.house_free", x, y, ts),
+        });
+      } else if (isLegacyCombined) {
         // Wells / rubble — single combined draw (no roof to fade).
         queue.push({
           sortKey: b.row + b.col,
